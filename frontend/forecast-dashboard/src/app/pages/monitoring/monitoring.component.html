@@ -1,0 +1,173 @@
+<div class="page">
+  <section class="hero">
+    <div>
+      <h2>Monitoreo y trazabilidad</h2>
+      <p>Forecasts, corridas del modelo y logs del scheduler en hora Lima, Perú</p>
+    </div>
+
+    <button class="refresh-btn" (click)="loadMonitoring()">Actualizar</button>
+  </section>
+
+  <section class="toolbar">
+    <div class="channel-selector">
+      <label for="monitoringChannelSelect">Canal</label>
+      <select id="monitoringChannelSelect" [value]="channel" (change)="onChannelChange($event)">
+        <option *ngFor="let item of availableChannels" [value]="item">
+          {{ item }}
+        </option>
+      </select>
+    </div>
+
+    <div class="meta-info" *ngIf="lastRefreshAt">
+      Última actualización: <strong>{{ lastRefreshAt | limaDateTime }}</strong>
+    </div>
+  </section>
+
+  <section *ngIf="loading" class="state-box loading">
+    Cargando monitoreo...
+  </section>
+
+  <section *ngIf="errorMessage && !loading" class="state-box error">
+    {{ errorMessage }}
+  </section>
+
+  <ng-container *ngIf="!loading">
+    <section class="summary-grid">
+      <article class="mini-card">
+        <h3>Forecasts</h3>
+        <p>{{ forecastHistory.length }}</p>
+      </article>
+
+      <article class="mini-card">
+        <h3>Corridas modelo</h3>
+        <p>{{ modelHistory.length }}</p>
+      </article>
+
+      <article class="mini-card">
+        <h3>Logs scheduler</h3>
+        <p>{{ schedulerHistory.length }}</p>
+      </article>
+    </section>
+
+    <section class="history-section">
+      <div class="history-card">
+        <div class="history-header">
+          <h3>Forecasts recientes</h3>
+          <span>{{ channel }}</span>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Canal</th>
+                <th>Forecast date</th>
+                <th>Valor</th>
+                <th>Modelo</th>
+                <th>Creado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let item of forecastHistory">
+                <td>{{ item.id }}</td>
+                <td>{{ item.channel }}</td>
+                <td>{{ item.forecast_date | limaDateTime }}</td>
+                <td>{{ item.predicted_value | number:'1.2-2' }}</td>
+                <td>{{ item.model_version }}</td>
+                <td>{{ item.created_at | limaDateTime }}</td>
+              </tr>
+              <tr *ngIf="forecastHistory.length === 0">
+                <td colspan="6" class="empty-row">No hay forecasts recientes.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="history-card">
+        <div class="history-header">
+          <h3>Corridas recientes del modelo</h3>
+          <span>{{ channel }}</span>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Tipo</th>
+                <th>Estado</th>
+                <th>MAPE</th>
+                <th>RMSE</th>
+                <th>Inicio</th>
+                <th>Fin</th>
+                <th>Creado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let item of modelHistory">
+                <td>{{ item.id }}</td>
+                <td>{{ item.run_type }}</td>
+                <td>
+                  <span [ngClass]="getStatusClass(item.status)">
+                    {{ item.status }}
+                  </span>
+                </td>
+                <td>{{ (item.mape ?? 0) | number:'1.2-2' }}%</td>
+                <td>{{ (item.rmse ?? 0) | number:'1.2-2' }}</td>
+                <td>{{ item.started_at | limaDateTime }}</td>
+                <td>{{ item.finished_at | limaDateTime }}</td>
+                <td>{{ item.created_at | limaDateTime }}</td>
+              </tr>
+              <tr *ngIf="modelHistory.length === 0">
+                <td colspan="8" class="empty-row">No hay corridas recientes.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="history-card">
+        <div class="history-header">
+          <h3>Logs recientes del scheduler</h3>
+          <span>{{ channel }}</span>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Job</th>
+                <th>Tipo</th>
+                <th>Estado</th>
+                <th>Acción</th>
+                <th>Mensaje</th>
+                <th>Creado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let item of schedulerHistory">
+                <td>{{ item.id }}</td>
+                <td>{{ item.job_name }}</td>
+                <td>{{ item.job_type }}</td>
+                <td>
+                  <span [ngClass]="getStatusClass(item.status)">
+                    {{ item.status }}
+                  </span>
+                </td>
+                <td>{{ item.action_taken }}</td>
+                <td class="message-cell">{{ item.message || '-' }}</td>
+                <td>{{ item.created_at | limaDateTime }}</td>
+              </tr>
+              <tr *ngIf="schedulerHistory.length === 0">
+                <td colspan="7" class="empty-row">No hay logs recientes.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </ng-container>
+</div>

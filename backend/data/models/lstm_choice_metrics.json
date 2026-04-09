@@ -1,0 +1,12 @@
+{
+  "channel": "Choice",
+  "mae": 6.8881,
+  "rmse": 8.6331,
+  "mape": 14.6772,
+  "r2": 0.5048,
+  "train_size": 592,
+  "test_size": 148,
+  "model_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_choice.keras",
+  "scaler_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_choice_scaler.joblib",
+  "metadata_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_choice_metadata.joblib"
+}

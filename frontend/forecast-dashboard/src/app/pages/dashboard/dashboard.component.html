@@ -1,0 +1,212 @@
+<div class="page">
+  <section class="hero">
+    <div>
+      <h2>Dashboard ejecutivo</h2>
+      <p>Resumen técnico-operativo del sistema de pronóstico</p>
+    </div>
+
+    <button class="refresh-btn" (click)="loadSummary()">Actualizar</button>
+  </section>
+
+  <section class="actions-panel">
+    <div class="actions-header">
+      <div>
+        <h3>Acciones del modelo</h3>
+        <span>Hora mostrada en formato Lima, Perú</span>
+      </div>
+
+      <div class="header-controls">
+        <div class="channel-selector">
+          <label for="channelSelect">Canal</label>
+          <select id="channelSelect" [value]="channel" (change)="onChannelChange($event)">
+            <option *ngFor="let item of availableChannels" [value]="item">
+              {{ item }}
+            </option>
+          </select>
+        </div>
+
+        <div class="auto-refresh-box">
+          <span class="auto-refresh-label">
+            Auto refresh:
+            <strong [ngClass]="autoRefreshEnabled ? 'status-success' : 'status-failed'">
+              {{ autoRefreshEnabled ? 'ON' : 'OFF' }}
+            </strong>
+          </span>
+
+          <button class="action-btn light" (click)="toggleAutoRefresh()">
+            {{ autoRefreshEnabled ? 'Desactivar' : 'Activar' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions-buttons">
+      <button
+        class="action-btn primary"
+        (click)="trainLstm()"
+        [disabled]="actionLoading || modelActionsDisabled">
+        Entrenar LSTM
+      </button>
+
+      <button
+        class="action-btn secondary"
+        (click)="retrainLstm()"
+        [disabled]="actionLoading || modelActionsDisabled">
+        Reentrenar LSTM
+      </button>
+
+      <button
+        class="action-btn dark"
+        (click)="checkAndRetrain()"
+        [disabled]="actionLoading || modelActionsDisabled">
+        Check & Retrain
+      </button>
+
+      <button
+        class="action-btn forecast"
+        (click)="generateForecast()"
+        [disabled]="actionLoading">
+        Generar Forecast Manual
+      </button>
+    </div>
+
+    <div class="auto-refresh-status">
+      Intervalo automático: {{ autoRefreshIntervalSeconds }} segundos
+      <span *ngIf="lastAutoRefreshAt">
+        · Última actualización automática: {{ lastAutoRefreshAt | limaDateTime }}
+      </span>
+    </div>
+
+    <div *ngIf="modelActionsDisabled" class="state-box loading action-box">
+      Las acciones de entrenamiento y reentrenamiento están habilitadas por ahora solo para el canal Choice.
+    </div>
+
+    <div *ngIf="actionLoading" class="state-box loading action-box">
+      Ejecutando acción, espera un momento...
+    </div>
+
+    <div *ngIf="actionMessage && !actionLoading" class="state-box success action-box">
+      {{ actionMessage }}
+    </div>
+
+    <div *ngIf="actionError && !actionLoading" class="state-box error action-box">
+      {{ actionError }}
+    </div>
+  </section>
+
+  <section *ngIf="loading" class="state-box loading">
+    Cargando resumen del sistema...
+  </section>
+
+  <section *ngIf="errorMessage && !loading" class="state-box error">
+    {{ errorMessage }}
+  </section>
+
+  <ng-container *ngIf="summary && !loading">
+    <section class="grid">
+      <article class="card">
+        <h3>Canal</h3>
+        <p class="big">{{ summary.channel }}</p>
+      </article>
+
+      <article class="card">
+        <h3>Scheduler</h3>
+        <p class="big" [class.ok]="summary.scheduler_status.running">
+          {{ summary.scheduler_status.running ? 'Activo' : 'Inactivo' }}
+        </p>
+      </article>
+
+      <article class="card" *ngIf="summary.lstm_metrics">
+        <h3>MAPE actual</h3>
+        <p class="big">{{ summary.lstm_metrics.mape | number:'1.2-2' }}%</p>
+      </article>
+
+      <article class="card" *ngIf="summary.latest_forecast">
+        <h3>Último forecast</h3>
+        <p class="big">{{ summary.latest_forecast.predicted_value | number:'1.2-2' }}</p>
+      </article>
+    </section>
+
+    <section class="grid details-grid">
+      <article class="card">
+        <h3>Estado del modelo LSTM</h3>
+        <ul class="info-list">
+          <li>Modelo: <strong>{{ summary.lstm_status.model_exists ? 'Sí' : 'No' }}</strong></li>
+          <li>Scaler: <strong>{{ summary.lstm_status.scaler_exists ? 'Sí' : 'No' }}</strong></li>
+          <li>Metadata: <strong>{{ summary.lstm_status.metadata_exists ? 'Sí' : 'No' }}</strong></li>
+          <li>Métricas: <strong>{{ summary.lstm_status.metrics_exists ? 'Sí' : 'No' }}</strong></li>
+        </ul>
+      </article>
+
+      <article class="card" *ngIf="summary.lstm_metrics">
+        <h3>Métricas LSTM</h3>
+        <ul class="info-list">
+          <li>MAE: <strong>{{ summary.lstm_metrics.mae | number:'1.2-2' }}</strong></li>
+          <li>RMSE: <strong>{{ summary.lstm_metrics.rmse | number:'1.2-2' }}</strong></li>
+          <li>MAPE: <strong>{{ summary.lstm_metrics.mape | number:'1.2-2' }}%</strong></li>
+          <li>R²: <strong>{{ summary.lstm_metrics.r2 | number:'1.2-2' }}</strong></li>
+          <li>Train size: <strong>{{ summary.lstm_metrics.train_size }}</strong></li>
+          <li>Test size: <strong>{{ summary.lstm_metrics.test_size }}</strong></li>
+        </ul>
+      </article>
+
+      <article class="card" *ngIf="summary.latest_forecast">
+        <h3>Último forecast generado</h3>
+        <ul class="info-list">
+          <li>ID: <strong>{{ summary.latest_forecast.id }}</strong></li>
+          <li>Canal: <strong>{{ summary.latest_forecast.channel }}</strong></li>
+          <li>Valor: <strong>{{ summary.latest_forecast.predicted_value | number:'1.2-2' }}</strong></li>
+          <li>Forecast date: <strong>{{ summary.latest_forecast.forecast_date | limaDateTime }}</strong></li>
+          <li>Creado: <strong>{{ summary.latest_forecast.created_at | limaDateTime }}</strong></li>
+          <li>Modelo: <strong>{{ summary.latest_forecast.model_version }}</strong></li>
+        </ul>
+      </article>
+
+      <article class="card" *ngIf="summary.latest_train_run">
+        <h3>Última corrida train / retrain</h3>
+        <ul class="info-list">
+          <li>ID: <strong>{{ summary.latest_train_run.id }}</strong></li>
+          <li>Tipo: <strong>{{ summary.latest_train_run.run_type }}</strong></li>
+          <li>
+            Estado:
+            <strong [ngClass]="getStatusClass(summary.latest_train_run.status)">
+              {{ summary.latest_train_run.status }}
+            </strong>
+          </li>
+          <li>MAPE: <strong>{{ (summary.latest_train_run.mape ?? 0) | number:'1.2-2' }}%</strong></li>
+          <li>RMSE: <strong>{{ (summary.latest_train_run.rmse ?? 0) | number:'1.2-2' }}</strong></li>
+          <li>Creado: <strong>{{ summary.latest_train_run.created_at | limaDateTime }}</strong></li>
+        </ul>
+      </article>
+
+      <article class="card" *ngIf="summary.latest_scheduler_job">
+        <h3>Último job del scheduler</h3>
+        <ul class="info-list">
+          <li>Job: <strong>{{ summary.latest_scheduler_job.job_name }}</strong></li>
+          <li>Tipo: <strong>{{ summary.latest_scheduler_job.job_type }}</strong></li>
+          <li>
+            Estado:
+            <strong [ngClass]="getStatusClass(summary.latest_scheduler_job.status)">
+              {{ summary.latest_scheduler_job.status }}
+            </strong>
+          </li>
+          <li>Acción: <strong>{{ summary.latest_scheduler_job.action_taken }}</strong></li>
+          <li>Creado: <strong>{{ summary.latest_scheduler_job.created_at | limaDateTime }}</strong></li>
+        </ul>
+
+        <div class="message-box" *ngIf="summary.latest_scheduler_job.message">
+          {{ summary.latest_scheduler_job.message }}
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>Jobs del scheduler</h3>
+        <div class="job-box" *ngFor="let job of summary.scheduler_status.jobs">
+          <p><strong>{{ job.id }}</strong></p>
+          <p>{{ job.trigger }}</p>
+          <p *ngIf="job.next_run_time">Siguiente: {{ job.next_run_time | limaDateTime }}</p>
+        </div>
+      </article>
+    </section>
+  </ng-container>
+</div>

@@ -1,0 +1,46 @@
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Archivos de entorno
+.env
+.env.*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build / dist
+dist/
+build/
+
+# Modelos o artefactos pesados
+*.pkl
+*.joblib
+*.h5
+*.keras
+
+# Datos temporales
+tmp/
+temp/
+
+# Ignorar dependencias de frontend
+node_modules/
+.angular/
+dist/
