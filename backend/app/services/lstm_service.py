@@ -37,10 +37,17 @@ def load_lstm_artifacts(channel: str):
         raise ValueError(f"No existe el metadata para el canal '{channel}' en: {metadata_path}")
 
     model = load_model(model_path, compile=False)
-    scaler = joblib.load(scaler_path)
+    scaler_artifact = joblib.load(scaler_path)
     metadata = joblib.load(metadata_path)
 
-    return model, scaler, metadata
+    if isinstance(scaler_artifact, dict) and "x_scaler" in scaler_artifact and "y_scaler" in scaler_artifact:
+        x_scaler = scaler_artifact["x_scaler"]
+        y_scaler = scaler_artifact["y_scaler"]
+    else:
+        x_scaler = scaler_artifact
+        y_scaler = scaler_artifact
+
+    return model, x_scaler, y_scaler, metadata
 
 
 def _build_external_variables_map(db: Session):
@@ -112,21 +119,50 @@ def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
 
     df = df.sort_values("datetime").reset_index(drop=True)
 
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
+    df["aht"] = pd.to_numeric(df["aht"], errors="coerce").fillna(0.0)
+    df["is_holiday"] = pd.to_numeric(df["is_holiday"], errors="coerce").fillna(0.0)
+    df["campaign_day"] = pd.to_numeric(df["campaign_day"], errors="coerce").fillna(0.0)
+    df["absenteeism_rate"] = pd.to_numeric(df["absenteeism_rate"], errors="coerce").fillna(0.0)
+
+    # Variables temporales
     df["day_of_week"] = df["datetime"].dt.weekday
     df["month"] = df["datetime"].dt.month
     df["day"] = df["datetime"].dt.day
     df["hour"] = df["datetime"].dt.hour
     df["minute"] = df["datetime"].dt.minute
     df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
+    df["minute_of_day"] = df["hour"] * 60 + df["minute"]
 
-    for col in ["aht", "is_holiday", "campaign_day", "absenteeism_rate"]:
-        if col not in df.columns:
-            df[col] = 0.0
+    # Codificación cíclica
+    df["dow_sin"] = np.sin(2 * np.pi * df["day_of_week"] / 7)
+    df["dow_cos"] = np.cos(2 * np.pi * df["day_of_week"] / 7)
 
-    df["aht"] = df["aht"].fillna(0.0)
-    df["is_holiday"] = df["is_holiday"].fillna(0.0)
-    df["campaign_day"] = df["campaign_day"].fillna(0.0)
-    df["absenteeism_rate"] = df["absenteeism_rate"].fillna(0.0)
+    df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12)
+    df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12)
+
+    df["minute_sin"] = np.sin(2 * np.pi * df["minute_of_day"] / 1440)
+    df["minute_cos"] = np.cos(2 * np.pi * df["minute_of_day"] / 1440)
+
+    # Lags ajustados a ~32 registros por día
+    df["lag_volume_1"] = df["volume"].shift(1)
+    df["lag_volume_2"] = df["volume"].shift(2)
+    df["lag_volume_32"] = df["volume"].shift(32)
+    df["lag_volume_224"] = df["volume"].shift(224)
+
+    # Rolling con solo pasado
+    df["rolling_mean_3"] = df["volume"].shift(1).rolling(window=3).mean()
+    df["rolling_mean_6"] = df["volume"].shift(1).rolling(window=6).mean()
+    df["rolling_mean_32"] = df["volume"].shift(1).rolling(window=32).mean()
+
+    df["lag_aht_1"] = df["aht"].shift(1)
+
+    df = df.dropna().reset_index(drop=True)
+
+    if df.empty:
+        raise ValueError(
+            f"El dataset del canal '{channel}' quedó vacío después de generar lags/rolling."
+        )
 
     return df
 
@@ -147,7 +183,7 @@ def _infer_next_datetime(df: pd.DataFrame):
 
 
 def predict_next_volume_for_channel(db: Session, channel: str) -> dict:
-    model, scaler, metadata = load_lstm_artifacts(channel)
+    model, x_scaler, y_scaler, metadata = load_lstm_artifacts(channel)
     df = _build_channel_dataframe(db, channel)
 
     feature_columns = metadata["feature_columns"]
@@ -164,24 +200,21 @@ def predict_next_volume_for_channel(db: Session, channel: str) -> dict:
             df[col] = 0.0
 
     dataset = df[feature_columns].copy()
-
-    scaled_data = scaler.transform(dataset)
+    scaled_data = x_scaler.transform(dataset)
 
     last_window = scaled_data[-time_steps:]
     X_input = np.array([last_window])
 
     prediction_scaled = model.predict(X_input, verbose=0)
+    prediction = y_scaler.inverse_transform(prediction_scaled).flatten()[0]
 
-    dummy_pred = np.zeros((1, len(feature_columns)))
-    dummy_pred[:, 0] = prediction_scaled.flatten()
-
-    prediction = scaler.inverse_transform(dummy_pred)[:, 0][0]
+    prediction = max(float(prediction), 0.0)
 
     next_forecast_datetime = _infer_next_datetime(df)
 
     return {
         "channel": channel,
         "forecast_date": next_forecast_datetime,
-        "predicted_value": round(float(prediction), 4),
-        "model_version": f"lstm_{slugify_channel(channel)}",
+        "predicted_value": round(prediction, 4),
+        "model_version": metadata.get("model_version", f"lstm_{slugify_channel(channel)}"),
     }

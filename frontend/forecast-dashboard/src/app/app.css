@@ -1,65 +1,128 @@
 :host {
   display: block;
   min-height: 100vh;
-  background: #eef2f7;
-  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(96, 165, 250, 0.12), transparent 26%),
+    linear-gradient(180deg, #edf2f7 0%, #e9eff6 100%);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   color: #0f172a;
 }
 
 .shell {
   min-height: 100vh;
+  padding-bottom: 20px;
 }
 
 .topbar {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 20px 24px 8px;
+  padding: 24px 24px 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
+  gap: 20px;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .brand h1 {
-  margin: 0 0 4px;
-  font-size: 28px;
+  margin: 0;
+  font-size: 42px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  color: #0f172a;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
 .brand p {
   margin: 0;
+  font-size: 17px;
   color: #64748b;
+  font-weight: 500;
 }
 
 .nav {
-  display: flex;
-  gap: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
+  padding: 8px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(203, 213, 225, 0.85);
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(10px);
 }
 
 .nav a {
   text-decoration: none;
-  padding: 10px 16px;
-  border-radius: 12px;
-  background: white;
+  padding: 12px 18px;
+  border-radius: 14px;
+  background: transparent;
   color: #1e293b;
-  font-weight: 700;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.nav a:hover {
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+  transform: translateY(-1px);
 }
 
 .nav a.active-link {
-  background: #1d4ed8;
-  color: white;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #ffffff;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.26);
 }
 
 .content {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 0 24px 24px;
+  padding: 0 24px 28px;
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .brand h1 {
+    font-size: 34px;
+  }
+
+  .brand p {
+    font-size: 15px;
+  }
 }
 
 @media (max-width: 700px) {
   .topbar {
-    flex-direction: column;
-    align-items: flex-start;
+    padding: 20px 18px 14px;
+  }
+
+  .content {
+    padding: 0 18px 24px;
+  }
+
+  .brand h1 {
+    font-size: 30px;
+  }
+
+  .nav {
+    width: 100%;
+    justify-content: flex-start;
   }
 }

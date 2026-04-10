@@ -1,25 +1,35 @@
 <div class="page">
-  <section class="hero">
+  <section class="hero monitoring-hero">
     <div>
       <h2>Monitoreo y trazabilidad</h2>
-      <p>Forecasts, corridas del modelo y logs del scheduler en hora Lima, Perú</p>
+      <p>Seguimiento de forecasts, corridas del modelo y logs del scheduler en hora Lima, Perú.</p>
     </div>
 
     <button class="refresh-btn" (click)="loadMonitoring()">Actualizar</button>
   </section>
 
-  <section class="toolbar">
-    <div class="channel-selector">
-      <label for="monitoringChannelSelect">Canal</label>
-      <select id="monitoringChannelSelect" [value]="channel" (change)="onChannelChange($event)">
-        <option *ngFor="let item of availableChannels" [value]="item">
-          {{ item }}
-        </option>
-      </select>
+  <section class="toolbar monitoring-toolbar">
+    <div class="toolbar-left">
+      <div class="channel-selector">
+        <label for="monitoringChannelSelect">Canal</label>
+        <select id="monitoringChannelSelect" [value]="channel" (change)="onChannelChange($event)">
+          <option *ngFor="let item of availableChannels" [value]="item">
+            {{ item }}
+          </option>
+        </select>
+      </div>
     </div>
 
-    <div class="meta-info" *ngIf="lastRefreshAt">
-      Última actualización: <strong>{{ lastRefreshAt | limaDateTime }}</strong>
+    <div class="toolbar-right">
+      <div class="meta-chip">
+        <span class="meta-chip-label">Canal actual</span>
+        <strong>{{ channel }}</strong>
+      </div>
+
+      <div class="meta-info" *ngIf="lastRefreshAt">
+        Última actualización:
+        <strong>{{ lastRefreshAt | limaDateTime }}</strong>
+      </div>
     </div>
   </section>
 
@@ -32,28 +42,45 @@
   </section>
 
   <ng-container *ngIf="!loading">
-    <section class="summary-grid">
-      <article class="mini-card">
-        <h3>Forecasts</h3>
+    <section class="summary-grid monitoring-summary-grid">
+      <article class="mini-card summary-card summary-card-forecast">
+        <div class="summary-top">
+          <span class="summary-badge summary-badge-purple">Forecasts</span>
+        </div>
+        <h3>Forecasts recientes</h3>
         <p>{{ forecastHistory.length }}</p>
+        <span class="summary-note">Registros recientes de pronósticos generados.</span>
       </article>
 
-      <article class="mini-card">
-        <h3>Corridas modelo</h3>
+      <article class="mini-card summary-card summary-card-model">
+        <div class="summary-top">
+          <span class="summary-badge summary-badge-green">Modelo</span>
+        </div>
+        <h3>Corridas del modelo</h3>
         <p>{{ modelHistory.length }}</p>
+        <span class="summary-note">Entrenamientos y reentrenamientos registrados.</span>
       </article>
 
-      <article class="mini-card">
-        <h3>Logs scheduler</h3>
+      <article class="mini-card summary-card summary-card-logs">
+        <div class="summary-top">
+          <span class="summary-badge summary-badge-blue">Scheduler</span>
+        </div>
+        <h3>Logs del scheduler</h3>
         <p>{{ schedulerHistory.length }}</p>
+        <span class="summary-note">Eventos recientes de ejecución automática.</span>
       </article>
     </section>
 
     <section class="history-section">
-      <div class="history-card">
+      <div class="history-card featured-history-card">
         <div class="history-header">
-          <h3>Forecasts recientes</h3>
-          <span>{{ channel }}</span>
+          <div>
+            <h3>Forecasts recientes</h3>
+            <p class="history-subtitle">
+              Mostrando los 5 valores pronosticados más recientes para el canal seleccionado.
+            </p>
+          </div>
+          <span class="section-chip section-chip-purple">{{ channel }}</span>
         </div>
 
         <div class="table-wrapper">
@@ -62,18 +89,22 @@
               <tr>
                 <th>ID</th>
                 <th>Canal</th>
-                <th>Forecast date</th>
+                <th>Fecha forecast</th>
                 <th>Valor</th>
                 <th>Modelo</th>
                 <th>Creado</th>
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let item of forecastHistory">
+              <tr *ngFor="let item of forecastHistory.slice(0, 5)">
                 <td>{{ item.id }}</td>
                 <td>{{ item.channel }}</td>
                 <td>{{ item.forecast_date | limaDateTime }}</td>
-                <td>{{ item.predicted_value | number:'1.2-2' }}</td>
+                <td>
+                  <span class="value-pill value-pill-purple">
+                    {{ item.predicted_value | number:'1.2-2' }}
+                  </span>
+                </td>
                 <td>{{ item.model_version }}</td>
                 <td>{{ item.created_at | limaDateTime }}</td>
               </tr>
@@ -87,8 +118,13 @@
 
       <div class="history-card">
         <div class="history-header">
-          <h3>Corridas recientes del modelo</h3>
-          <span>{{ channel }}</span>
+          <div>
+            <h3>Corridas recientes del modelo</h3>
+            <p class="history-subtitle">
+              Mostrando las 10 ejecuciones más recientes de entrenamiento y reentrenamiento.
+            </p>
+          </div>
+          <span class="section-chip section-chip-green">{{ channel }}</span>
         </div>
 
         <div class="table-wrapper">
@@ -106,11 +142,11 @@
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let item of modelHistory">
+              <tr *ngFor="let item of modelHistory.slice(0, 10)">
                 <td>{{ item.id }}</td>
                 <td>{{ item.run_type }}</td>
                 <td>
-                  <span [ngClass]="getStatusClass(item.status)">
+                  <span class="status-pill" [ngClass]="getStatusClass(item.status)">
                     {{ item.status }}
                   </span>
                 </td>
@@ -130,8 +166,13 @@
 
       <div class="history-card">
         <div class="history-header">
-          <h3>Logs recientes del scheduler</h3>
-          <span>{{ channel }}</span>
+          <div>
+            <h3>Logs recientes del scheduler</h3>
+            <p class="history-subtitle">
+              Mostrando los 10 eventos más recientes generados por el scheduler.
+            </p>
+          </div>
+          <span class="section-chip section-chip-blue">{{ channel }}</span>
         </div>
 
         <div class="table-wrapper">
@@ -148,17 +189,21 @@
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let item of schedulerHistory">
+              <tr *ngFor="let item of schedulerHistory.slice(0, 10)">
                 <td>{{ item.id }}</td>
                 <td>{{ item.job_name }}</td>
                 <td>{{ item.job_type }}</td>
                 <td>
-                  <span [ngClass]="getStatusClass(item.status)">
+                  <span class="status-pill" [ngClass]="getStatusClass(item.status)">
                     {{ item.status }}
                   </span>
                 </td>
                 <td>{{ item.action_taken }}</td>
-                <td class="message-cell">{{ item.message || '-' }}</td>
+                <td class="message-cell">
+                  <div class="message-bubble">
+                    {{ item.message || '-' }}
+                  </div>
+                </td>
                 <td>{{ item.created_at | limaDateTime }}</td>
               </tr>
               <tr *ngIf="schedulerHistory.length === 0">
