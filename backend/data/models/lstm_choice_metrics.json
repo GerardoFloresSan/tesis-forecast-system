@@ -1,22 +1,22 @@
 {
   "channel": "Choice",
-  "mae": 11.608,
-  "rmse": 15.3511,
-  "mape": 58.102,
-  "r2": 0.034,
-  "train_size": 6490,
-  "validation_size": 1622,
-  "test_size": 1980,
+  "mae": 11.962,
+  "rmse": 14.9899,
+  "mape": 56.147,
+  "r2": 0.0816,
+  "train_size": 6516,
+  "validation_size": 1628,
+  "test_size": 2012,
   "model_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_choice.keras",
   "scaler_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_choice_scaler.joblib",
   "metadata_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_choice_metadata.joblib",
-  "best_val_loss": 0.001872,
-  "model_version": "lstm_choice_v6_tuned",
+  "best_val_loss": 0.001631,
+  "model_version": "lstm_choice_v10_clean",
   "baseline_name": "naive_daily_lag_32",
   "baseline_metrics": {
-    "mae": 10.4328,
-    "rmse": 13.8969,
-    "mape": 31.4249,
-    "r2": 0.2083
+    "mae": 10.4404,
+    "rmse": 13.8898,
+    "mape": 31.3232,
+    "r2": 0.2114
   }
 }

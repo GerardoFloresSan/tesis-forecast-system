@@ -17,11 +17,10 @@ from tensorflow.keras.models import Sequential
 
 from app.core.config import settings
 
-
 CHANNEL_TO_TRAIN = "Choice"
 
 # Ajustado a la frecuencia real observada (~32 registros por día)
-TIME_STEPS = 64
+TIME_STEPS = 32
 EPOCHS = 80
 BATCH_SIZE = 32
 TRAIN_SPLIT = 0.8
@@ -187,6 +186,16 @@ def add_time_and_lag_features(df: pd.DataFrame) -> pd.DataFrame:
     # Lag de AHT
     df["lag_aht_1"] = df["aht"].shift(1)
 
+    # Diferencias (velocidad de cambio)
+    df["volume_diff_1"] = df["volume"].diff(1)
+    df["volume_diff_32"] = df["volume"].diff(32)
+
+    # Ratio respecto al promedio móvil (detecta desviaciones)
+    df["volume_ratio_rolling32"] = df["volume"] / (df["rolling_mean_32"] + 1)
+
+    # Volatilidad reciente
+    df["volume_std_6"] = df["volume"].shift(1).rolling(window=6).std()
+
     df = df.dropna().reset_index(drop=True)
 
     if df.empty:
@@ -245,6 +254,10 @@ def main():
         "month_cos",
         "minute_sin",
         "minute_cos",
+        "volume_diff_1",
+        "volume_diff_32",
+        "volume_ratio_rolling32",
+        "volume_std_6",
         "volume",
     ]
 
@@ -422,7 +435,7 @@ def main():
             "test_size": int(len(X_test)),
             "best_val_loss": float(best_val_loss) if best_val_loss is not None else None,
             "records_per_day_reference": 32,
-            "model_version": "lstm_choice_v6_tuned",
+            "model_version": "lstm_choice_v10_clean",
             "baseline_name": "naive_daily_lag_32",
             "baseline_metrics": {
                 "mae": float(baseline_mae),
@@ -449,7 +462,7 @@ def main():
                 "scaler_path": str(scaler_path),
                 "metadata_path": str(metadata_path),
                 "best_val_loss": round(float(best_val_loss), 6) if best_val_loss is not None else None,
-                "model_version": "lstm_choice_v6_tuned",
+                "model_version": "lstm_choice_v10_clean",
                 "baseline_name": "naive_daily_lag_32",
                 "baseline_metrics": {
                     "mae": round(float(baseline_mae), 4),
