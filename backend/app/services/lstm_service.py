@@ -53,17 +53,25 @@ def load_lstm_artifacts(channel: str):
 def _build_external_variables_map(db: Session):
     records = db.query(ExternalVariable).all()
 
+    _DEFAULT_EXT = {
+        "is_holiday_peru": 0.0,
+        "is_holiday_spain": 0.0,
+        "is_holiday_mexico": 0.0,
+        "campaign_day": 0.0,
+        "absenteeism_rate": 0.0,
+    }
+
     external_map = {}
 
     for record in records:
         if record.variable_date not in external_map:
-            external_map[record.variable_date] = {
-                "is_holiday": 0.0,
-                "campaign_day": 0.0,
-                "absenteeism_rate": 0.0,
-            }
+            external_map[record.variable_date] = dict(_DEFAULT_EXT)
 
         variable_type = record.variable_type.strip().lower()
+
+        # Mapear "is_holiday" genérico a "is_holiday_peru"
+        if variable_type == "is_holiday":
+            variable_type = "is_holiday_peru"
 
         if variable_type in external_map[record.variable_date]:
             external_map[record.variable_date][variable_type] = record.variable_value
@@ -89,14 +97,14 @@ def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
 
     dataset = []
     for row in rows:
-        variables = external_map.get(
-            row.interaction_date,
-            {
-                "is_holiday": 0.0,
-                "campaign_day": 0.0,
-                "absenteeism_rate": 0.0,
-            },
-        )
+        _default_vars = {
+            "is_holiday_peru": 0.0,
+            "is_holiday_spain": 0.0,
+            "is_holiday_mexico": 0.0,
+            "campaign_day": 0.0,
+            "absenteeism_rate": 0.0,
+        }
+        variables = {**_default_vars, **external_map.get(row.interaction_date, {})}
 
         dataset.append(
             {
@@ -105,7 +113,9 @@ def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
                 "channel": row.channel,
                 "volume": row.volume,
                 "aht": row.aht if row.aht is not None else 0.0,
-                "is_holiday": variables["is_holiday"],
+                "is_holiday_peru": variables["is_holiday_peru"],
+                "is_holiday_spain": variables["is_holiday_spain"],
+                "is_holiday_mexico": variables["is_holiday_mexico"],
                 "campaign_day": variables["campaign_day"],
                 "absenteeism_rate": variables["absenteeism_rate"],
             }
@@ -121,7 +131,9 @@ def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
 
     df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
     df["aht"] = pd.to_numeric(df["aht"], errors="coerce").fillna(0.0)
-    df["is_holiday"] = pd.to_numeric(df["is_holiday"], errors="coerce").fillna(0.0)
+    df["is_holiday_peru"] = pd.to_numeric(df["is_holiday_peru"], errors="coerce").fillna(0.0)
+    df["is_holiday_spain"] = pd.to_numeric(df["is_holiday_spain"], errors="coerce").fillna(0.0)
+    df["is_holiday_mexico"] = pd.to_numeric(df["is_holiday_mexico"], errors="coerce").fillna(0.0)
     df["campaign_day"] = pd.to_numeric(df["campaign_day"], errors="coerce").fillna(0.0)
     df["absenteeism_rate"] = pd.to_numeric(df["absenteeism_rate"], errors="coerce").fillna(0.0)
 

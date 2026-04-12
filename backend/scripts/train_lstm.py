@@ -21,8 +21,8 @@ from app.core.config import settings
 CHANNEL_TO_TRAIN = "Choice"
 
 # Ajustado a la frecuencia real observada (~32 registros por día)
-TIME_STEPS = 32
-EPOCHS = 50
+TIME_STEPS = 64
+EPOCHS = 80
 BATCH_SIZE = 32
 TRAIN_SPLIT = 0.8
 VALIDATION_SPLIT_WITHIN_TRAIN = 0.2
@@ -104,6 +104,9 @@ def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
         ext_df["variable_date"] = pd.to_datetime(ext_df["variable_date"]).dt.date
         ext_df["variable_type"] = ext_df["variable_type"].astype(str).str.strip().str.lower()
 
+        # Mapear "is_holiday" genérico a "is_holiday_peru"
+        ext_df["variable_type"] = ext_df["variable_type"].replace("is_holiday", "is_holiday_peru")
+
         ext_pivot = (
             ext_df.pivot_table(
                 index="variable_date",
@@ -126,7 +129,7 @@ def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
     else:
         df = hist_df.copy()
 
-    for col in ["is_holiday", "campaign_day", "absenteeism_rate"]:
+    for col in ["is_holiday_peru", "is_holiday_spain", "is_holiday_mexico", "absenteeism_rate", "campaign_day"]:
         if col not in df.columns:
             df[col] = 0.0
 
@@ -138,7 +141,9 @@ def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
 
     df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
     df["aht"] = pd.to_numeric(df["aht"], errors="coerce").fillna(0.0)
-    df["is_holiday"] = pd.to_numeric(df["is_holiday"], errors="coerce").fillna(0.0)
+    df["is_holiday_peru"] = pd.to_numeric(df["is_holiday_peru"], errors="coerce").fillna(0.0)
+    df["is_holiday_spain"] = pd.to_numeric(df["is_holiday_spain"], errors="coerce").fillna(0.0)
+    df["is_holiday_mexico"] = pd.to_numeric(df["is_holiday_mexico"], errors="coerce").fillna(0.0)
     df["campaign_day"] = pd.to_numeric(df["campaign_day"], errors="coerce").fillna(0.0)
     df["absenteeism_rate"] = pd.to_numeric(df["absenteeism_rate"], errors="coerce").fillna(0.0)
 
@@ -190,20 +195,17 @@ def add_time_and_lag_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def build_model(input_shape: tuple[int, int]) -> Sequential:
+def build_model(input_shape):
     model = Sequential([
-        LSTM(64, return_sequences=True, input_shape=input_shape),
+        LSTM(128, return_sequences=True, input_shape=input_shape),
         Dropout(0.2),
-        LSTM(32),
+        LSTM(64),
         Dropout(0.2),
+        Dense(64, activation="relu"),
         Dense(32, activation="relu"),
         Dense(1),
     ])
-
-    model.compile(
-        optimizer="adam",
-        loss=Huber(),
-    )
+    model.compile(optimizer="adam", loss=Huber())
     return model
 
 
@@ -222,11 +224,12 @@ def main():
     print(df["volume"].describe())
 
     feature_columns = [
-        "volume",
         "aht",
-        "is_holiday",
-        "campaign_day",
+        "is_holiday_peru",
+        "is_holiday_spain",
+        "is_holiday_mexico",
         "absenteeism_rate",
+        "campaign_day",
         "lag_volume_1",
         "lag_volume_2",
         "lag_volume_32",
@@ -242,6 +245,7 @@ def main():
         "month_cos",
         "minute_sin",
         "minute_cos",
+        "volume",
     ]
 
     dataset = df[feature_columns].copy()
@@ -418,7 +422,7 @@ def main():
             "test_size": int(len(X_test)),
             "best_val_loss": float(best_val_loss) if best_val_loss is not None else None,
             "records_per_day_reference": 32,
-            "model_version": "lstm_choice_v4_with_daily_baseline",
+            "model_version": "lstm_choice_v6_tuned",
             "baseline_name": "naive_daily_lag_32",
             "baseline_metrics": {
                 "mae": float(baseline_mae),
@@ -445,7 +449,7 @@ def main():
                 "scaler_path": str(scaler_path),
                 "metadata_path": str(metadata_path),
                 "best_val_loss": round(float(best_val_loss), 6) if best_val_loss is not None else None,
-                "model_version": "lstm_choice_v4_with_daily_baseline",
+                "model_version": "lstm_choice_v6_tuned",
                 "baseline_name": "naive_daily_lag_32",
                 "baseline_metrics": {
                     "mae": round(float(baseline_mae), 4),
