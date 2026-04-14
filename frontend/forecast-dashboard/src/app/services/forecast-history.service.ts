@@ -2,13 +2,14 @@ import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ForecastHistoryItem } from '../models/system-summary.model';
+import { environment } from '../../environments/environment';
 
 @Injectable({
   providedIn: 'root'
 })
 export class ForecastHistoryService {
   private readonly http = inject(HttpClient);
-  private readonly apiUrl = 'http://127.0.0.1:8000/forecast/history';
+  private readonly apiUrl = `${environment.apiUrl}/forecast/history`;
 
   getHistory(channel: string = 'Choice', limit: number = 10): Observable<ForecastHistoryItem[]> {
     return this.http.get<ForecastHistoryItem[]>(

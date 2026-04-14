@@ -4,10 +4,10 @@
       <h2>Dashboard ejecutivo</h2>
       <p>Resumen técnico-operativo del sistema de pronóstico</p>
     </div>
-
-    <button class="refresh-btn" (click)="loadSummary()">Actualizar</button>
+    <button class="refresh-btn" (click)="loadSummary(); loadForecastHistory()">Actualizar</button>
   </section>
 
+  <!-- ── Panel de acciones ── -->
   <section class="actions-panel">
     <div class="actions-header">
       <div>
@@ -19,9 +19,9 @@
         <div class="channel-selector">
           <label for="channelSelect">Canal</label>
           <select id="channelSelect" [value]="channel" (change)="onChannelChange($event)">
-            <option *ngFor="let item of availableChannels" [value]="item">
-              {{ item }}
-            </option>
+            @for (item of availableChannels; track item) {
+              <option [value]="item">{{ item }}</option>
+            }
           </select>
         </div>
 
@@ -32,7 +32,6 @@
               {{ autoRefreshEnabled ? 'ON' : 'OFF' }}
             </strong>
           </span>
-
           <button class="action-btn light" (click)="toggleAutoRefresh()">
             {{ autoRefreshEnabled ? 'Desactivar' : 'Activar' }}
           </button>
@@ -41,29 +40,22 @@
     </div>
 
     <div class="actions-buttons">
-      <button
-        class="action-btn primary"
+      <button class="action-btn primary"
         (click)="trainLstm()"
         [disabled]="actionLoading || modelActionsDisabled">
         Entrenar LSTM
       </button>
-
-      <button
-        class="action-btn secondary"
+      <button class="action-btn secondary"
         (click)="retrainLstm()"
         [disabled]="actionLoading || modelActionsDisabled">
         Reentrenar LSTM
       </button>
-
-      <button
-        class="action-btn dark"
+      <button class="action-btn dark"
         (click)="checkAndRetrain()"
         [disabled]="actionLoading || modelActionsDisabled">
-        Check & Retrain
+        Check &amp; Retrain
       </button>
-
-      <button
-        class="action-btn forecast"
+      <button class="action-btn forecast"
         (click)="generateForecast()"
         [disabled]="actionLoading">
         Generar Forecast Manual
@@ -72,100 +64,127 @@
 
     <div class="auto-refresh-status">
       Intervalo automático: {{ autoRefreshIntervalSeconds }} segundos
-      <span *ngIf="lastAutoRefreshAt">
+      @if (lastAutoRefreshAt) {
         · Última actualización automática: {{ lastAutoRefreshAt | limaDateTime }}
-      </span>
+      }
     </div>
 
-    <div *ngIf="modelActionsDisabled" class="state-box loading action-box">
-      Las acciones de entrenamiento y reentrenamiento están habilitadas por ahora solo para el canal Choice.
-    </div>
-
-    <div *ngIf="actionLoading" class="state-box loading action-box">
-      Ejecutando acción, espera un momento...
-    </div>
-
-    <div *ngIf="actionMessage && !actionLoading" class="state-box success action-box">
-      {{ actionMessage }}
-    </div>
-
-    <div *ngIf="actionError && !actionLoading" class="state-box error action-box">
-      {{ actionError }}
-    </div>
+    @if (modelActionsDisabled) {
+      <div class="state-box loading action-box">
+        Las acciones de entrenamiento y reentrenamiento están habilitadas por ahora solo para el canal Choice.
+      </div>
+    }
+    @if (actionLoading) {
+      <div class="state-box loading action-box">
+        <span class="spinner"></span> Ejecutando acción, espera un momento...
+      </div>
+    }
+    @if (actionMessage && !actionLoading) {
+      <div class="state-box success action-box">{{ actionMessage }}</div>
+    }
+    @if (actionError && !actionLoading) {
+      <div class="state-box error action-box">{{ actionError }}</div>
+    }
   </section>
 
-  <section *ngIf="loading" class="state-box loading">
-    Cargando resumen del sistema...
-  </section>
+  <!-- ── Estados de carga / error global ── -->
+  @if (loading) {
+    <section class="state-box loading">
+      <span class="spinner"></span> Cargando resumen del sistema...
+    </section>
+  }
+  @if (errorMessage && !loading) {
+    <section class="state-box error">{{ errorMessage }}</section>
+  }
 
-  <section *ngIf="errorMessage && !loading" class="state-box error">
-    {{ errorMessage }}
-  </section>
+  @if (summary && !loading) {
 
-  <ng-container *ngIf="summary && !loading">
- <section class="grid summary-grid-executive">
-  <article class="card executive-card executive-card-channel">
-    <div class="executive-top">
-      <div class="executive-label">Canal activo</div>
-      <span class="executive-badge executive-badge-blue">Operativo</span>
-    </div>
+    <!-- ── Tarjetas ejecutivas ── -->
+    <section class="grid summary-grid-executive">
 
-    <div class="executive-body">
-      <h3>{{ summary.channel }}</h3>
-      <p class="executive-note">Canal actualmente seleccionado para entrenamiento, forecast y monitoreo.</p>
-    </div>
-  </article>
+      <!-- Canal activo -->
+      <article class="card executive-card executive-card-channel">
+        <div class="executive-top">
+          <div class="executive-label">Canal activo</div>
+          <span class="executive-badge executive-badge-blue">Operativo</span>
+        </div>
+        <div class="executive-body">
+          <h3>{{ summary.channel }}</h3>
+          <p class="executive-note">Canal seleccionado para entrenamiento, forecast y monitoreo.</p>
+        </div>
+      </article>
 
-  <article class="card executive-card executive-card-scheduler">
-    <div class="executive-top">
-      <div class="executive-label">Estado del scheduler</div>
-      <span
-        class="executive-badge"
-        [ngClass]="summary.scheduler_status.running ? 'executive-badge-green' : 'executive-badge-red'">
-        {{ summary.scheduler_status.running ? 'En ejecución' : 'Detenido' }}
-      </span>
-    </div>
+      <!-- Scheduler -->
+      <article class="card executive-card executive-card-scheduler">
+        <div class="executive-top">
+          <div class="executive-label">Estado del scheduler</div>
+          <span class="executive-badge"
+            [ngClass]="summary.scheduler_status.running ? 'executive-badge-green' : 'executive-badge-red'">
+            {{ summary.scheduler_status.running ? 'En ejecución' : 'Detenido' }}
+          </span>
+        </div>
+        <div class="executive-body">
+          <h3 [class.ok]="summary.scheduler_status.running">
+            {{ summary.scheduler_status.running ? 'Activo' : 'Inactivo' }}
+          </h3>
+          <p class="executive-note">
+            El scheduler {{ summary.scheduler_status.running ? 'está ejecutando' : 'no está ejecutando' }} tareas programadas.
+          </p>
+        </div>
+      </article>
 
-    <div class="executive-body">
-      <h3 [class.ok]="summary.scheduler_status.running">
-        {{ summary.scheduler_status.running ? 'Activo' : 'Inactivo' }}
-      </h3>
-      <p class="executive-note">Indica si el sistema automático está ejecutando tareas programadas.</p>
-    </div>
-  </article>
+      <!-- MAPE con gauge de calidad -->
+      @if (summary.lstm_metrics) {
+        <article class="card executive-card executive-card-mape">
+          <div class="executive-top">
+            <div class="executive-label">MAPE actual</div>
+            <span class="executive-badge executive-badge-amber">Precisión</span>
+          </div>
+          <div class="executive-body">
+            <h3>{{ summary.lstm_metrics.mape | number:'1.2-2' }}%</h3>
+            <!-- Barra de calidad del MAPE -->
+            <div class="mape-gauge" [style.background]="mapeQuality.bgColor">
+              <div class="mape-gauge-bar"
+                [style.width.%]="mapeQuality.fillWidth"
+                [style.background]="mapeQuality.color">
+              </div>
+            </div>
+            <span class="mape-quality-label" [style.color]="mapeQuality.color">
+              {{ mapeQuality.label }}
+            </span>
+            <p class="executive-note">Error porcentual promedio del modelo frente a la demanda real.</p>
+          </div>
+        </article>
+      }
 
-  <article class="card executive-card executive-card-mape" *ngIf="summary.lstm_metrics">
-    <div class="executive-top">
-      <div class="executive-label">MAPE actual</div>
-      <span class="executive-badge executive-badge-amber">Precisión</span>
-    </div>
+      <!-- Último forecast -->
+      @if (summary.latest_forecast) {
+        <article class="card executive-card executive-card-forecast">
+          <div class="executive-top">
+            <div class="executive-label">Último forecast</div>
+            <span class="executive-badge executive-badge-purple">Predicción</span>
+          </div>
+          <div class="executive-body">
+            <h3>{{ summary.latest_forecast.predicted_value | number:'1.2-2' }}</h3>
+            <p class="executive-note">
+              Generado el {{ summary.latest_forecast.forecast_date | limaDateTime }}.
+            </p>
+          </div>
+        </article>
+      }
 
-    <div class="executive-body">
-      <h3>{{ summary.lstm_metrics.mape | number:'1.2-2' }}%</h3>
-      <p class="executive-note">Error porcentual promedio del modelo frente a la demanda real.</p>
-    </div>
-  </article>
+    </section>
 
-  <article class="card executive-card executive-card-forecast" *ngIf="summary.latest_forecast">
-    <div class="executive-top">
-      <div class="executive-label">Último forecast</div>
-      <span class="executive-badge executive-badge-purple">Predicción</span>
-    </div>
-
-    <div class="executive-body">
-      <h3>{{ summary.latest_forecast.predicted_value | number:'1.2-2' }}</h3>
-      <p class="executive-note">Último valor pronosticado generado por el sistema.</p>
-    </div>
-  </article>
-</section>
-
+    <!-- ── Salud del modelo ── -->
     <section class="section-block">
       <div class="section-heading">
         <h3>Salud del modelo</h3>
-        <p>Estado general de los componentes del modelo y métricas de rendimiento para el canal seleccionado.</p>
+        <p>Estado de los componentes y métricas de rendimiento para el canal seleccionado.</p>
       </div>
 
       <section class="grid details-grid health-grid">
+
+        <!-- Disponibilidad -->
         <article class="card">
           <div class="card-section-title">Disponibilidad del modelo</div>
 
@@ -182,7 +201,7 @@
           <div class="status-item">
             <div>
               <strong>Escalador</strong>
-              <p>Transformador de datos necesario para preparar las entradas del modelo.</p>
+              <p>Transformador necesario para preparar las entradas del modelo.</p>
             </div>
             <span class="pill" [class.ok]="summary.lstm_status.scaler_exists">
               {{ summary.lstm_status.scaler_exists ? 'Disponible' : 'No disponible' }}
@@ -210,171 +229,309 @@
           </div>
         </article>
 
-        <article class="card" *ngIf="summary.lstm_metrics">
-          <div class="card-section-title">Métricas del modelo</div>
+        <!-- Métricas del modelo -->
+        @if (summary.lstm_metrics) {
+          <article class="card">
+            <div class="card-section-title">Métricas del modelo</div>
 
-          <ul class="info-list metrics-list">
-            <li>
-              <div class="metric-row">
-                <div class="metric-main">
-                  <span class="metric-label">
-                    MAE
-                    <span class="tooltip-container">
-                      <span class="tooltip-icon">i</span>
-                      <span class="tooltip-text">
-                        Mean Absolute Error. Mide el error promedio absoluto del modelo. En este caso, el pronóstico se equivoca en promedio en alrededor de {{ summary.lstm_metrics.mae | number:'1.2-2' }} interacciones.
+            <ul class="info-list metrics-list">
+              <li>
+                <div class="metric-row">
+                  <div class="metric-main">
+                    <span class="metric-label">
+                      MAE
+                      <span class="tooltip-container">
+                        <span class="tooltip-icon">i</span>
+                        <span class="tooltip-text">
+                          Mean Absolute Error. El pronóstico se equivoca en promedio en {{ summary.lstm_metrics.mae | number:'1.2-2' }} interacciones.
+                        </span>
                       </span>
                     </span>
-                  </span>
-                  <span class="metric-help">Error promedio por predicción</span>
+                    <span class="metric-help">Error promedio por predicción</span>
+                  </div>
+                  <strong>{{ summary.lstm_metrics.mae | number:'1.2-2' }}</strong>
                 </div>
-                <strong>{{ summary.lstm_metrics.mae | number:'1.2-2' }}</strong>
-              </div>
-            </li>
-
-            <li>
-              <div class="metric-row">
-                <div class="metric-main">
-                  <span class="metric-label">
-                    RMSE
-                    <span class="tooltip-container">
-                      <span class="tooltip-icon">i</span>
-                      <span class="tooltip-text">
-                        Root Mean Squared Error. Da más peso a errores grandes. Aquí indica que cuando el modelo falla más de lo normal, el error puede acercarse a {{ summary.lstm_metrics.rmse | number:'1.2-2' }} interacciones.
+              </li>
+              <li>
+                <div class="metric-row">
+                  <div class="metric-main">
+                    <span class="metric-label">
+                      RMSE
+                      <span class="tooltip-container">
+                        <span class="tooltip-icon">i</span>
+                        <span class="tooltip-text">
+                          Root Mean Squared Error. Cuando el modelo falla más de lo normal, el error puede acercarse a {{ summary.lstm_metrics.rmse | number:'1.2-2' }} interacciones.
+                        </span>
                       </span>
                     </span>
-                  </span>
-                  <span class="metric-help">Impacto de errores grandes</span>
+                    <span class="metric-help">Impacto de errores grandes</span>
+                  </div>
+                  <strong>{{ summary.lstm_metrics.rmse | number:'1.2-2' }}</strong>
                 </div>
-                <strong>{{ summary.lstm_metrics.rmse | number:'1.2-2' }}</strong>
-              </div>
-            </li>
-
-            <li>
-              <div class="metric-row">
-                <div class="metric-main">
-                  <span class="metric-label">
-                    MAPE
-                    <span class="tooltip-container">
-                      <span class="tooltip-icon">i</span>
-                      <span class="tooltip-text">
-                        Mean Absolute Percentage Error. Representa el error porcentual promedio del modelo. Actualmente muestra una desviación aproximada de {{ summary.lstm_metrics.mape | number:'1.2-2' }}% respecto al valor real.
+              </li>
+              <li>
+                <div class="metric-row">
+                  <div class="metric-main">
+                    <span class="metric-label">
+                      MAPE
+                      <span class="tooltip-container">
+                        <span class="tooltip-icon">i</span>
+                        <span class="tooltip-text">
+                          Mean Absolute Percentage Error. Desviación porcentual promedio de {{ summary.lstm_metrics.mape | number:'1.2-2' }}% respecto al valor real.
+                        </span>
                       </span>
                     </span>
-                  </span>
-                  <span class="metric-help">Error porcentual promedio</span>
+                    <span class="metric-help">Error porcentual promedio</span>
+                  </div>
+                  <strong>{{ summary.lstm_metrics.mape | number:'1.2-2' }}%</strong>
                 </div>
-                <strong>{{ summary.lstm_metrics.mape | number:'1.2-2' }}%</strong>
-              </div>
-            </li>
-
-            <li>
-              <div class="metric-row">
-                <div class="metric-main">
-                  <span class="metric-label">
-                    R²
-                    <span class="tooltip-container">
-                      <span class="tooltip-icon">i</span>
-                      <span class="tooltip-text">
-                        Coeficiente de determinación. Indica cuánto del comportamiento de la demanda logra explicar el modelo. En este caso, explica aproximadamente el {{ (summary.lstm_metrics.r2 * 100) | number:'1.0-0' }}% de la variabilidad.
+              </li>
+              <li>
+                <div class="metric-row">
+                  <div class="metric-main">
+                    <span class="metric-label">
+                      R²
+                      <span class="tooltip-container">
+                        <span class="tooltip-icon">i</span>
+                        <span class="tooltip-text">
+                          Coeficiente de determinación. El modelo explica el {{ (summary.lstm_metrics.r2 * 100) | number:'1.0-0' }}% de la variabilidad de la demanda.
+                        </span>
                       </span>
                     </span>
-                  </span>
-                  <span class="metric-help">Capacidad explicativa del modelo</span>
+                    <span class="metric-help">Capacidad explicativa del modelo</span>
+                  </div>
+                  <strong>{{ summary.lstm_metrics.r2 | number:'1.2-2' }}</strong>
                 </div>
-                <strong>{{ summary.lstm_metrics.r2 | number:'1.2-2' }}</strong>
-              </div>
-            </li>
-
-            <li>
-              <div class="metric-row">
-                <div class="metric-main">
-                  <span class="metric-label">
-                    Train size
-                    <span class="tooltip-container">
-                      <span class="tooltip-icon">i</span>
-                      <span class="tooltip-text">
-                        Cantidad de registros utilizados para entrenar el modelo y enseñarle patrones históricos.
+              </li>
+              <li>
+                <div class="metric-row">
+                  <div class="metric-main">
+                    <span class="metric-label">
+                      Train size
+                      <span class="tooltip-container">
+                        <span class="tooltip-icon">i</span>
+                        <span class="tooltip-text">Registros utilizados para entrenar el modelo.</span>
                       </span>
                     </span>
-                  </span>
-                  <span class="metric-help">Datos usados para entrenamiento</span>
+                    <span class="metric-help">Datos usados para entrenamiento</span>
+                  </div>
+                  <strong>{{ summary.lstm_metrics.train_size }}</strong>
                 </div>
-                <strong>{{ summary.lstm_metrics.train_size }}</strong>
-              </div>
-            </li>
-
-            <li>
-              <div class="metric-row">
-                <div class="metric-main">
-                  <span class="metric-label">
-                    Test size
-                    <span class="tooltip-container">
-                      <span class="tooltip-icon">i</span>
-                      <span class="tooltip-text">
-                        Cantidad de registros utilizados para validar el modelo con datos que no vio durante el entrenamiento.
+              </li>
+              <li>
+                <div class="metric-row">
+                  <div class="metric-main">
+                    <span class="metric-label">
+                      Test size
+                      <span class="tooltip-container">
+                        <span class="tooltip-icon">i</span>
+                        <span class="tooltip-text">Registros utilizados para validar el modelo.</span>
                       </span>
                     </span>
-                  </span>
-                  <span class="metric-help">Datos usados para validación</span>
+                    <span class="metric-help">Datos usados para validación</span>
+                  </div>
+                  <strong>{{ summary.lstm_metrics.test_size }}</strong>
                 </div>
-                <strong>{{ summary.lstm_metrics.test_size }}</strong>
-              </div>
-            </li>
-          </ul>
-        </article>
+              </li>
+            </ul>
+          </article>
+        }
+
       </section>
     </section>
 
+    <!-- ── Actividad reciente ── -->
     <section class="section-block">
       <div class="section-heading">
         <h3>Actividad reciente del sistema</h3>
-        <p>Últimos resultados generados por el modelo y últimas ejecuciones registradas en la operación.</p>
+        <p>Últimos resultados generados por el modelo y ejecuciones registradas.</p>
       </div>
-<article class="card featured-forecast-card" *ngIf="summary.latest_forecast">
-  <div class="featured-header">
-    <div>
-      <div class="card-section-title">Último forecast generado</div>
-      <p class="featured-subtitle">Resultado más reciente producido por el modelo para el canal seleccionado.</p>
-    </div>
-    <span class="featured-chip">Pronóstico</span>
-  </div>
 
-  <div class="featured-forecast-value">
-    <span class="featured-value-label">Valor pronosticado</span>
-    <h3>{{ summary.latest_forecast.predicted_value | number:'1.2-2' }}</h3>
-  </div>
+      <div class="activity-cards-grid">
 
-  <div class="info-stack">
-    <div class="info-row">
-      <span>ID</span>
-      <strong>{{ summary.latest_forecast.id }}</strong>
-    </div>
-    <div class="info-row">
-      <span>Canal</span>
-      <strong>{{ summary.latest_forecast.channel }}</strong>
-    </div>
-    <div class="info-row">
-      <span>Fecha forecast</span>
-      <strong>{{ summary.latest_forecast.forecast_date | limaDateTime }}</strong>
-    </div>
-    <div class="info-row">
-      <span>Creado</span>
-      <strong>{{ summary.latest_forecast.created_at | limaDateTime }}</strong>
-    </div>
-    <div class="info-row">
-      <span>Versión del modelo</span>
-      <strong>{{ summary.latest_forecast.model_version }}</strong>
-    </div>
-  </div>
-</article>
-      
+        <!-- Último forecast -->
+        @if (summary.latest_forecast) {
+          <article class="card featured-forecast-card">
+            <div class="featured-header">
+              <div>
+                <div class="card-section-title">Último forecast generado</div>
+                <p class="featured-subtitle">Resultado más reciente producido por el modelo.</p>
+              </div>
+              <span class="featured-chip">Pronóstico</span>
+            </div>
+
+            <div class="featured-forecast-value">
+              <span class="featured-value-label">Valor pronosticado</span>
+              <h3>{{ summary.latest_forecast.predicted_value | number:'1.2-2' }}</h3>
+            </div>
+
+            <div class="info-stack">
+              <div class="info-row">
+                <span>ID</span>
+                <strong>{{ summary.latest_forecast.id }}</strong>
+              </div>
+              <div class="info-row">
+                <span>Canal</span>
+                <strong>{{ summary.latest_forecast.channel }}</strong>
+              </div>
+              <div class="info-row">
+                <span>Fecha forecast</span>
+                <strong>{{ summary.latest_forecast.forecast_date | limaDateTime }}</strong>
+              </div>
+              <div class="info-row">
+                <span>Creado</span>
+                <strong>{{ summary.latest_forecast.created_at | limaDateTime }}</strong>
+              </div>
+              <div class="info-row">
+                <span>Versión del modelo</span>
+                <strong>{{ summary.latest_forecast.model_version }}</strong>
+              </div>
+            </div>
+          </article>
+        }
+
+        <!-- Última corrida del modelo — dato que ya venía en la API pero no se mostraba -->
+        @if (summary.latest_train_run) {
+          <article class="card featured-trainrun-card">
+            <div class="featured-header">
+              <div>
+                <div class="card-section-title">Última corrida del modelo</div>
+                <p class="featured-subtitle">Entrenamiento o reentrenamiento más reciente.</p>
+              </div>
+              <span class="featured-chip featured-chip-teal">Entrenamiento</span>
+            </div>
+
+            <div class="featured-status-row">
+              <span class="status-pill" [ngClass]="getStatusClass(summary.latest_train_run.status)">
+                {{ summary.latest_train_run.status }}
+              </span>
+              <span class="trainrun-type-badge">{{ summary.latest_train_run.run_type }}</span>
+            </div>
+
+            <div class="info-stack">
+              @if (summary.latest_train_run.mape != null) {
+                <div class="info-row">
+                  <span>MAPE de la corrida</span>
+                  <strong>{{ summary.latest_train_run.mape | number:'1.2-2' }}%</strong>
+                </div>
+              }
+              @if (summary.latest_train_run.mae != null) {
+                <div class="info-row">
+                  <span>MAE</span>
+                  <strong>{{ summary.latest_train_run.mae | number:'1.2-2' }}</strong>
+                </div>
+              }
+              @if (summary.latest_train_run.r2 != null) {
+                <div class="info-row">
+                  <span>R²</span>
+                  <strong>{{ summary.latest_train_run.r2 | number:'1.2-2' }}</strong>
+                </div>
+              }
+              <div class="info-row">
+                <span>Canal</span>
+                <strong>{{ summary.latest_train_run.channel }}</strong>
+              </div>
+              <div class="info-row">
+                <span>Creado</span>
+                <strong>{{ summary.latest_train_run.created_at | limaDateTime }}</strong>
+              </div>
+            </div>
+          </article>
+        }
+
+      </div>
     </section>
 
+    <!-- ── Gráfico de tendencia de pronósticos (SVG nativo) ── -->
+    @if (forecastHistory.length >= 2) {
+      <section class="section-block">
+        <div class="section-heading">
+          <h3>Tendencia de pronósticos</h3>
+          <p>Evolución de los últimos valores pronosticados para el canal seleccionado.</p>
+        </div>
+
+        <article class="card chart-card">
+          <div class="chart-card-header">
+            <div class="card-section-title">Valores pronosticados recientes</div>
+            @if (forecastChartData.hasData) {
+              <div class="chart-stats">
+                <span>Mín: <strong>{{ forecastChartData.minLabel }}</strong></span>
+                <span>Máx: <strong>{{ forecastChartData.maxLabel }}</strong></span>
+                <span>Registros: <strong>{{ forecastHistory.length }}</strong></span>
+              </div>
+            }
+          </div>
+
+          @if (forecastChartData.hasData) {
+            <div class="chart-container">
+              <!-- viewBox: 600×180 | zona de plot: x[52..584] y[14..148] -->
+              <svg viewBox="0 0 600 180" class="chart-svg"
+                   aria-label="Gráfico de tendencia de pronósticos">
+                <defs>
+                  <linearGradient id="fcastGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%"   stop-color="#7c3aed" stop-opacity="0.28"/>
+                    <stop offset="100%" stop-color="#7c3aed" stop-opacity="0.02"/>
+                  </linearGradient>
+                </defs>
+
+                <!-- Líneas de referencia horizontales -->
+                @for (gl of forecastChartData.gridLines; track gl.y) {
+                  <line x1="52" x2="584"
+                        [attr.y1]="gl.y" [attr.y2]="gl.y"
+                        stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,3"/>
+                  <text x="48" [attr.y]="gl.y + 4" text-anchor="end"
+                        font-size="10" fill="#94a3b8"
+                        font-family="'Segoe UI', Tahoma, sans-serif">{{ gl.label }}</text>
+                }
+
+                <!-- Área rellena bajo la línea -->
+                <path [attr.d]="forecastChartData.areaPath" fill="url(#fcastGrad)"/>
+
+                <!-- Línea principal -->
+                <path [attr.d]="forecastChartData.linePath"
+                      fill="none" stroke="#7c3aed" stroke-width="2.5"
+                      stroke-linejoin="round" stroke-linecap="round"/>
+
+                <!-- Puntos de datos -->
+                @for (pt of forecastChartData.points; track pt.x) {
+                  <circle [attr.cx]="pt.x" [attr.cy]="pt.y" r="3.5"
+                          fill="#7c3aed" stroke="white" stroke-width="2"/>
+                }
+
+                <!-- Último punto resaltado -->
+                @if (forecastChartData.points.length > 0) {
+                  <circle
+                    [attr.cx]="forecastChartData.points[forecastChartData.points.length - 1].x"
+                    [attr.cy]="forecastChartData.points[forecastChartData.points.length - 1].y"
+                    r="6" fill="#7c3aed" stroke="white" stroke-width="2.5"/>
+                }
+
+                <!-- Etiquetas eje X -->
+                @for (pt of forecastChartData.xLabels; track pt.x) {
+                  <text [attr.x]="pt.x" y="176" text-anchor="middle"
+                        font-size="10" fill="#94a3b8"
+                        font-family="'Segoe UI', Tahoma, sans-serif">{{ pt.label }}</text>
+                }
+
+                <!-- Línea base del eje X -->
+                <line x1="52" x2="584" y1="148" y2="148"
+                      stroke="#e2e8f0" stroke-width="1"/>
+              </svg>
+            </div>
+          } @else {
+            <div class="empty-note">
+              No hay suficientes datos de pronóstico para mostrar el gráfico.
+            </div>
+          }
+        </article>
+      </section>
+    }
+
+    <!-- ── Programación del scheduler ── -->
     <section class="section-block">
       <div class="section-heading">
         <h3>Programación del scheduler</h3>
-        <p>Tareas configuradas actualmente para la ejecución automática del sistema.</p>
+        <p>Tareas configuradas para la ejecución automática del sistema.</p>
       </div>
 
       <section class="grid scheduler-grid">
@@ -382,22 +539,24 @@
           <div class="card-section-title">Jobs del scheduler</div>
 
           <div class="scheduler-list">
-            <div class="job-box" *ngFor="let job of summary.scheduler_status.jobs">
-              <div class="job-top">
-                <strong>{{ job.id }}</strong>
-                <span class="job-badge">Programado</span>
+            @for (job of summary.scheduler_status.jobs; track job.id) {
+              <div class="job-box">
+                <div class="job-top">
+                  <strong>{{ job.id }}</strong>
+                  <span class="job-badge">Programado</span>
+                </div>
+                <p>{{ job.trigger }}</p>
+                @if (job.next_run_time) {
+                  <p>Siguiente ejecución: {{ job.next_run_time | limaDateTime }}</p>
+                }
               </div>
-
-              <p>{{ job.trigger }}</p>
-              <p *ngIf="job.next_run_time">Siguiente ejecución: {{ job.next_run_time | limaDateTime }}</p>
-            </div>
-
-            <div *ngIf="summary.scheduler_status.jobs.length === 0" class="empty-note">
-              No hay jobs configurados actualmente.
-            </div>
+            } @empty {
+              <div class="empty-note">No hay jobs configurados actualmente.</div>
+            }
           </div>
         </article>
       </section>
     </section>
-  </ng-container>
+
+  }<!-- fin @if summary -->
 </div>

@@ -1,13 +1,14 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { environment } from '../../environments/environment';
 
 @Injectable({
   providedIn: 'root'
 })
 export class ModelActionsService {
   private readonly http = inject(HttpClient);
-  private readonly baseUrl = 'http://127.0.0.1:8000/model';
+  private readonly baseUrl = `${environment.apiUrl}/model`;
 
   trainLstm(channel: string = 'Choice'): Observable<any> {
     return this.http.post(`${this.baseUrl}/train-lstm?channel=${channel}`, {});

@@ -4,18 +4,18 @@
       <h2>Monitoreo y trazabilidad</h2>
       <p>Seguimiento de forecasts, corridas del modelo y logs del scheduler en hora Lima, Perú.</p>
     </div>
-
     <button class="refresh-btn" (click)="loadMonitoring()">Actualizar</button>
   </section>
 
+  <!-- ── Barra de herramientas ── -->
   <section class="toolbar monitoring-toolbar">
     <div class="toolbar-left">
       <div class="channel-selector">
         <label for="monitoringChannelSelect">Canal</label>
         <select id="monitoringChannelSelect" [value]="channel" (change)="onChannelChange($event)">
-          <option *ngFor="let item of availableChannels" [value]="item">
-            {{ item }}
-          </option>
+          @for (item of availableChannels; track item) {
+            <option [value]="item">{{ item }}</option>
+          }
         </select>
       </div>
     </div>
@@ -25,31 +25,35 @@
         <span class="meta-chip-label">Canal actual</span>
         <strong>{{ channel }}</strong>
       </div>
-
-      <div class="meta-info" *ngIf="lastRefreshAt">
-        Última actualización:
-        <strong>{{ lastRefreshAt | limaDateTime }}</strong>
-      </div>
+      @if (lastRefreshAt) {
+        <div class="meta-info">
+          Última actualización: <strong>{{ lastRefreshAt | limaDateTime }}</strong>
+        </div>
+      }
     </div>
   </section>
 
-  <section *ngIf="loading" class="state-box loading">
-    Cargando monitoreo...
-  </section>
+  @if (loading) {
+    <section class="state-box loading">
+      <span class="spinner"></span> Cargando monitoreo...
+    </section>
+  }
+  @if (errorMessage && !loading) {
+    <section class="state-box error">{{ errorMessage }}</section>
+  }
 
-  <section *ngIf="errorMessage && !loading" class="state-box error">
-    {{ errorMessage }}
-  </section>
+  @if (!loading) {
 
-  <ng-container *ngIf="!loading">
-    <section class="summary-grid monitoring-summary-grid">
+    <!-- ── Mini-tarjetas de resumen ── -->
+    <section class="monitoring-summary-grid">
+
       <article class="mini-card summary-card summary-card-forecast">
         <div class="summary-top">
           <span class="summary-badge summary-badge-purple">Forecasts</span>
         </div>
         <h3>Forecasts recientes</h3>
         <p>{{ forecastHistory.length }}</p>
-        <span class="summary-note">Registros recientes de pronósticos generados.</span>
+        <span class="summary-note">Pronósticos generados para el canal seleccionado.</span>
       </article>
 
       <article class="mini-card summary-card summary-card-model">
@@ -69,15 +73,19 @@
         <p>{{ schedulerHistory.length }}</p>
         <span class="summary-note">Eventos recientes de ejecución automática.</span>
       </article>
+
     </section>
 
+    <!-- ── Historial ── -->
     <section class="history-section">
+
+      <!-- Forecasts recientes -->
       <div class="history-card featured-history-card">
         <div class="history-header">
           <div>
             <h3>Forecasts recientes</h3>
             <p class="history-subtitle">
-              Mostrando los 5 valores pronosticados más recientes para el canal seleccionado.
+              Mostrando los {{ forecastHistory.length }} valores pronosticados más recientes para el canal seleccionado.
             </p>
           </div>
           <span class="section-chip section-chip-purple">{{ channel }}</span>
@@ -96,36 +104,103 @@
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let item of forecastHistory.slice(0, 5)">
-                <td>{{ item.id }}</td>
-                <td>{{ item.channel }}</td>
-                <td>{{ item.forecast_date | limaDateTime }}</td>
-                <td>
-                  <span class="value-pill value-pill-purple">
-                    {{ item.predicted_value | number:'1.2-2' }}
-                  </span>
-                </td>
-                <td>{{ item.model_version }}</td>
-                <td>{{ item.created_at | limaDateTime }}</td>
-              </tr>
-              <tr *ngIf="forecastHistory.length === 0">
-                <td colspan="6" class="empty-row">No hay forecasts recientes.</td>
-              </tr>
+              @for (item of forecastHistory; track item.id) {
+                <tr>
+                  <td>{{ item.id }}</td>
+                  <td>{{ item.channel }}</td>
+                  <td>{{ item.forecast_date | limaDateTime }}</td>
+                  <td>
+                    <span class="value-pill value-pill-purple">
+                      {{ item.predicted_value | number:'1.2-2' }}
+                    </span>
+                  </td>
+                  <td>{{ item.model_version }}</td>
+                  <td>{{ item.created_at | limaDateTime }}</td>
+                </tr>
+              } @empty {
+                <tr><td colspan="6" class="empty-row">No hay forecasts recientes.</td></tr>
+              }
             </tbody>
           </table>
         </div>
       </div>
 
+      <!-- Corridas del modelo con gráfico MAPE -->
       <div class="history-card">
         <div class="history-header">
           <div>
             <h3>Corridas recientes del modelo</h3>
             <p class="history-subtitle">
-              Mostrando las 10 ejecuciones más recientes de entrenamiento y reentrenamiento.
+              Mostrando las {{ modelHistory.length }} ejecuciones más recientes de entrenamiento y reentrenamiento.
             </p>
           </div>
           <span class="section-chip section-chip-green">{{ channel }}</span>
         </div>
+
+        <!-- Gráfico de evolución de MAPE (SVG nativo) -->
+        @if (mapeChartData.hasData) {
+          <div class="mape-chart-section">
+            <div class="mape-chart-title">
+              <span>Evolución de MAPE por corrida</span>
+              <div class="mape-legend">
+                <span class="legend-dot" style="background:#15803d"></span><span>&lt; 10 %</span>
+                <span class="legend-dot" style="background:#2563eb"></span><span>10–15 %</span>
+                <span class="legend-dot" style="background:#b45309"></span><span>15–20 %</span>
+                <span class="legend-dot" style="background:#b91c1c"></span><span>&gt; 20 %</span>
+                <span class="legend-dash"></span><span>Umbral 15 %</span>
+              </div>
+            </div>
+
+            <div class="mape-chart-wrapper">
+              <!-- viewBox: 600×160 | zona de plot: x[48..576] y[14..128] -->
+              <svg viewBox="0 0 600 160" class="chart-svg"
+                   aria-label="Gráfico de evolución de MAPE por corrida del modelo">
+
+                <!-- Líneas de referencia -->
+                @for (gl of mapeChartData.gridLines; track gl.y) {
+                  <line x1="48" x2="576"
+                        [attr.y1]="gl.y" [attr.y2]="gl.y"
+                        stroke="#e2e8f0" stroke-width="1" stroke-dasharray="3,3"/>
+                  <text x="44" [attr.y]="gl.y + 4" text-anchor="end"
+                        font-size="10" fill="#94a3b8"
+                        font-family="'Segoe UI', Tahoma, sans-serif">{{ gl.label }}</text>
+                }
+
+                <!-- Barras de MAPE -->
+                @for (bar of mapeChartData.bars; track bar.x) {
+                  <rect [attr.x]="bar.x" [attr.y]="bar.y"
+                        [attr.width]="bar.width" [attr.height]="bar.height"
+                        [attr.fill]="bar.color" rx="3" opacity="0.88"/>
+                  <!-- Valor encima de la barra -->
+                  <text [attr.x]="bar.x + bar.width / 2" [attr.y]="bar.y - 3"
+                        text-anchor="middle" font-size="9" fill="#475569"
+                        font-family="'Segoe UI', Tahoma, sans-serif">
+                    {{ bar.value | number:'1.1-1' }}%
+                  </text>
+                  <!-- Etiqueta de fecha debajo (solo si showLabel) -->
+                  @if (bar.showLabel) {
+                    <text [attr.x]="bar.x + bar.width / 2" y="156"
+                          text-anchor="middle" font-size="9" fill="#94a3b8"
+                          font-family="'Segoe UI', Tahoma, sans-serif">{{ bar.label }}</text>
+                  }
+                }
+
+                <!-- Línea de umbral al 15 % -->
+                <line x1="48" x2="576"
+                      [attr.y1]="mapeChartData.thresholdY" [attr.y2]="mapeChartData.thresholdY"
+                      stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.65"/>
+                <text x="578" [attr.y]="mapeChartData.thresholdY + 4"
+                      font-size="9" fill="#b91c1c"
+                      font-family="'Segoe UI', Tahoma, sans-serif">15%</text>
+
+                <!-- Línea base del eje X -->
+                <line x1="48" x2="576"
+                      [attr.y1]="mapeChartData.bottom" [attr.y2]="mapeChartData.bottom"
+                      stroke="#e2e8f0" stroke-width="1"/>
+              </svg>
+            </div>
+          </div>
+        }
 
         <div class="table-wrapper">
           <table class="data-table">
@@ -142,34 +217,36 @@
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let item of modelHistory.slice(0, 10)">
-                <td>{{ item.id }}</td>
-                <td>{{ item.run_type }}</td>
-                <td>
-                  <span class="status-pill" [ngClass]="getStatusClass(item.status)">
-                    {{ item.status }}
-                  </span>
-                </td>
-                <td>{{ (item.mape ?? 0) | number:'1.2-2' }}%</td>
-                <td>{{ (item.rmse ?? 0) | number:'1.2-2' }}</td>
-                <td>{{ item.started_at | limaDateTime }}</td>
-                <td>{{ item.finished_at | limaDateTime }}</td>
-                <td>{{ item.created_at | limaDateTime }}</td>
-              </tr>
-              <tr *ngIf="modelHistory.length === 0">
-                <td colspan="8" class="empty-row">No hay corridas recientes.</td>
-              </tr>
+              @for (item of modelHistory; track item.id) {
+                <tr>
+                  <td>{{ item.id }}</td>
+                  <td>{{ item.run_type }}</td>
+                  <td>
+                    <span class="status-pill" [ngClass]="getStatusClass(item.status)">
+                      {{ item.status }}
+                    </span>
+                  </td>
+                  <td>{{ (item.mape ?? 0) | number:'1.2-2' }}%</td>
+                  <td>{{ (item.rmse ?? 0) | number:'1.2-2' }}</td>
+                  <td>{{ item.started_at | limaDateTime }}</td>
+                  <td>{{ item.finished_at | limaDateTime }}</td>
+                  <td>{{ item.created_at | limaDateTime }}</td>
+                </tr>
+              } @empty {
+                <tr><td colspan="8" class="empty-row">No hay corridas recientes.</td></tr>
+              }
             </tbody>
           </table>
         </div>
       </div>
 
+      <!-- Logs del scheduler -->
       <div class="history-card">
         <div class="history-header">
           <div>
             <h3>Logs recientes del scheduler</h3>
             <p class="history-subtitle">
-              Mostrando los 10 eventos más recientes generados por el scheduler.
+              Mostrando los {{ schedulerHistory.length }} eventos más recientes generados por el scheduler.
             </p>
           </div>
           <span class="section-chip section-chip-blue">{{ channel }}</span>
@@ -189,30 +266,31 @@
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let item of schedulerHistory.slice(0, 10)">
-                <td>{{ item.id }}</td>
-                <td>{{ item.job_name }}</td>
-                <td>{{ item.job_type }}</td>
-                <td>
-                  <span class="status-pill" [ngClass]="getStatusClass(item.status)">
-                    {{ item.status }}
-                  </span>
-                </td>
-                <td>{{ item.action_taken }}</td>
-                <td class="message-cell">
-                  <div class="message-bubble">
-                    {{ item.message || '-' }}
-                  </div>
-                </td>
-                <td>{{ item.created_at | limaDateTime }}</td>
-              </tr>
-              <tr *ngIf="schedulerHistory.length === 0">
-                <td colspan="7" class="empty-row">No hay logs recientes.</td>
-              </tr>
+              @for (item of schedulerHistory; track item.id) {
+                <tr>
+                  <td>{{ item.id }}</td>
+                  <td>{{ item.job_name }}</td>
+                  <td>{{ item.job_type }}</td>
+                  <td>
+                    <span class="status-pill" [ngClass]="getStatusClass(item.status)">
+                      {{ item.status }}
+                    </span>
+                  </td>
+                  <td>{{ item.action_taken }}</td>
+                  <td class="message-cell">
+                    <div class="message-bubble">{{ item.message || '-' }}</div>
+                  </td>
+                  <td>{{ item.created_at | limaDateTime }}</td>
+                </tr>
+              } @empty {
+                <tr><td colspan="7" class="empty-row">No hay logs recientes.</td></tr>
+              }
             </tbody>
           </table>
         </div>
       </div>
+
     </section>
-  </ng-container>
+
+  }<!-- fin @if !loading -->
 </div>
