@@ -1,8 +1,15 @@
 import json
 import math
+import os
 import random
 import re
 from pathlib import Path
+
+# ── Compatibilidad TF 2.15 / Keras 3 en Windows ─────────────────────────────
+# Fuerza el uso de la API Keras 2 (tf.keras) para evitar el crash de tracing
+# en TF >= 2.11 sobre Windows sin GPU. Debe definirse ANTES de importar TF.
+os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
+# ─────────────────────────────────────────────────────────────────────────────
 
 import joblib
 import numpy as np
@@ -12,7 +19,7 @@ from sqlalchemy import create_engine
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.preprocessing import RobustScaler, StandardScaler
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
 from tensorflow.keras.losses import Huber
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.optimizers import Adam
@@ -21,6 +28,7 @@ from app.core.config import settings
 
 CHANNEL_TO_TRAIN = "Choice"
 
+# Mantenemos la configuración estable para aislar el efecto del filtro horario
 TIME_STEPS = 32
 EPOCHS = 100
 BATCH_SIZE = 32
@@ -28,6 +36,14 @@ TRAIN_SPLIT = 0.8
 VALIDATION_SPLIT_WITHIN_TRAIN = 0.2
 RANDOM_SEED = 42
 BIAS_CORRECTION_FACTOR = 0.35
+
+# Reglas de negocio de entrenamiento
+TRAINABLE_CHANNELS = {"Choice", "España"}
+CHANNEL_OPERATING_WINDOWS = {
+    "Choice": ("00:00", "16:30"),
+    "España": ("00:00", "16:30"),
+    # Mexico se omite por ahora
+}
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 MODEL_DIR = BASE_DIR / "data" / "models"
@@ -102,6 +118,55 @@ def create_sequences(features: np.ndarray, target: np.ndarray, time_steps: int):
     return np.array(X), np.array(y)
 
 
+def time_str_to_minutes(value: str) -> int:
+    parsed = pd.to_datetime(str(value), errors="coerce")
+    if pd.isna(parsed):
+        raise ValueError(f"No se pudo interpretar la hora: {value}")
+    return int(parsed.hour * 60 + parsed.minute)
+
+
+def apply_channel_business_rules(hist_df: pd.DataFrame, channel: str) -> pd.DataFrame:
+    if channel not in TRAINABLE_CHANNELS:
+        raise ValueError(
+            f"El canal '{channel}' está fuera del entrenamiento por reglas de negocio. "
+            f"Canales permitidos: {sorted(TRAINABLE_CHANNELS)}"
+        )
+
+    if channel not in CHANNEL_OPERATING_WINDOWS:
+        return hist_df.copy()
+
+    start_str, end_str = CHANNEL_OPERATING_WINDOWS[channel]
+    start_minutes = time_str_to_minutes(start_str)
+    end_minutes = time_str_to_minutes(end_str)
+
+    df = hist_df.copy()
+    parsed_times = pd.to_datetime(df["interval_time"].astype(str), errors="coerce")
+
+    if parsed_times.isna().any():
+        invalid_count = int(parsed_times.isna().sum())
+        raise ValueError(
+            f"Se encontraron {invalid_count} registros con interval_time inválido."
+        )
+
+    df["_interval_minutes"] = parsed_times.dt.hour * 60 + parsed_times.dt.minute
+
+    before_count = len(df)
+    df = df[
+        (df["_interval_minutes"] >= start_minutes)
+        & (df["_interval_minutes"] <= end_minutes)
+    ].copy()
+    after_count = len(df)
+
+    removed = before_count - after_count
+    print(
+        f"Regla de negocio aplicada para {channel}: {start_str} a {end_str}. "
+        f"Registros removidos fuera de horario: {removed}"
+    )
+
+    df.drop(columns=["_interval_minutes"], inplace=True, errors="ignore")
+    return df
+
+
 def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
     historical_query = """
         SELECT
@@ -137,6 +202,14 @@ def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
     hist_df["interaction_date"] = pd.to_datetime(hist_df["interaction_date"]).dt.date
     hist_df["volume"] = pd.to_numeric(hist_df["volume"], errors="coerce").fillna(0.0)
     hist_df["aht"] = pd.to_numeric(hist_df["aht"], errors="coerce").fillna(0.0)
+
+    # Aplicar reglas de negocio del horario operativo
+    hist_df = apply_channel_business_rules(hist_df, channel)
+
+    if hist_df.empty:
+        raise ValueError(
+            f"No quedaron registros para el canal '{channel}' después de aplicar el horario operativo."
+        )
 
     # Elimina duplicados exactos primero
     hist_df = hist_df.drop_duplicates(
@@ -247,7 +320,7 @@ def add_time_and_lag_features(df: pd.DataFrame) -> pd.DataFrame:
 
     df["minute_of_day"] = df["hour"] * 60 + df["minute"]
 
-    # Slot diario aproximado (32 slots por día)
+    # Slot diario aproximado
     df["slot_index"] = df.groupby(df["datetime"].dt.date).cumcount()
     df["slot_sin"] = np.sin(2 * np.pi * df["slot_index"] / 32)
     df["slot_cos"] = np.cos(2 * np.pi * df["slot_index"] / 32)
@@ -302,10 +375,21 @@ def add_time_and_lag_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def build_model(input_shape):
+def build_model(input_shape, run_eagerly: bool = False):
+    """
+    Construye el modelo LSTM secuencial.
+
+    Cambios respecto a versiones anteriores:
+    - Se usa Input(shape=...) como primera capa en lugar de pasar `input_shape`
+      directamente al LSTM. Esto evita el UserWarning de Keras 3 y el crash de
+      tracing en TensorFlow >= 2.11 sobre Windows sin GPU.
+    - Se expone `run_eagerly` para diagnóstico: si el tracing sigue fallando,
+      activarlo desactiva la compilación de grafos y muestra el error real.
+    """
     model = Sequential(
         [
-            LSTM(64, return_sequences=True, input_shape=input_shape),
+            Input(shape=input_shape),          # ← capa de entrada explícita
+            LSTM(64, return_sequences=True),    # ← sin input_shape aquí
             Dropout(0.2),
             LSTM(32),
             Dropout(0.2),
@@ -318,6 +402,7 @@ def build_model(input_shape):
     model.compile(
         optimizer=Adam(learning_rate=0.001, clipnorm=1.0),
         loss=Huber(),
+        run_eagerly=run_eagerly,               # ← False en producción, True para debug
     )
     return model
 
@@ -465,6 +550,11 @@ def main():
 
     model = build_model((X_train.shape[1], X_train.shape[2]))
 
+    # Fallback automático: si el tracing falla en Windows sin GPU,
+    # reintenta en modo eager para exponer el error real.
+    # En producción Linux/Docker esto nunca se activa.
+    _eager_fallback = False
+
     early_stopping = EarlyStopping(
         monitor="val_loss",
         patience=12,
@@ -480,16 +570,38 @@ def main():
     )
 
     print("Entrenando modelo LSTM...")
-    history = model.fit(
-        X_train,
-        y_train,
-        validation_data=(X_val, y_val),
-        epochs=EPOCHS,
-        batch_size=BATCH_SIZE,
-        callbacks=[early_stopping, reduce_lr],
-        verbose=1,
-        shuffle=False,
-    )
+    try:
+        history = model.fit(
+            X_train,
+            y_train,
+            validation_data=(X_val, y_val),
+            epochs=EPOCHS,
+            batch_size=BATCH_SIZE,
+            callbacks=[early_stopping, reduce_lr],
+            verbose=1,
+            shuffle=False,
+        )
+    except Exception as e:
+        # Si el tracing falla (problema Windows/Keras3), reintenta en modo eager
+        # para obtener el mensaje de error real y continuar el entrenamiento.
+        print(f"\n[AVISO] Falló el tracing de TensorFlow: {e}")
+        print("[AVISO] Reintentando con run_eagerly=True (modo diagnóstico)...")
+        _eager_fallback = True
+        model = build_model((X_train.shape[1], X_train.shape[2]), run_eagerly=True)
+        history = model.fit(
+            X_train,
+            y_train,
+            validation_data=(X_val, y_val),
+            epochs=EPOCHS,
+            batch_size=BATCH_SIZE,
+            callbacks=[early_stopping, reduce_lr],
+            verbose=1,
+            shuffle=False,
+        )
+
+    if _eager_fallback:
+        print("\n[INFO] Entrenamiento completado en modo eager (run_eagerly=True).")
+        print("[INFO] Para producción, verifica la versión de Keras/TF o usa Docker/WSL2.")
 
     print("Calculando bias de validación...")
     y_val_pred_scaled = model.predict(X_val, verbose=0).flatten()
@@ -597,7 +709,7 @@ def main():
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
     channel_slug = slugify_channel(CHANNEL_TO_TRAIN)
-    model_version = "lstm_choice_v12_short_term_bias_aware"
+    model_version = "lstm_choice_v12_business_hours"
 
     model_path = MODEL_DIR / f"lstm_{channel_slug}.keras"
     scaler_path = MODEL_DIR / f"lstm_{channel_slug}_scaler.joblib"
@@ -634,6 +746,11 @@ def main():
             "y_scaler_type": "StandardScaler",
             "validation_bias": float(val_bias),
             "bias_correction_factor": float(BIAS_CORRECTION_FACTOR),
+            "business_rules": {
+                "trainable_channels": sorted(TRAINABLE_CHANNELS),
+                "channel_operating_windows": CHANNEL_OPERATING_WINDOWS,
+                "excluded_channels": ["Mexico"],
+            },
             "baseline_name": "naive_daily_lag_32",
             "baseline_metrics": {
                 "mae": float(baseline_mae),
@@ -673,6 +790,11 @@ def main():
                 "target_transform": "log1p",
                 "validation_bias": round(float(val_bias), 4),
                 "bias_correction_factor": round(float(BIAS_CORRECTION_FACTOR), 4),
+                "business_rules": {
+                    "trainable_channels": sorted(TRAINABLE_CHANNELS),
+                    "channel_operating_windows": CHANNEL_OPERATING_WINDOWS,
+                    "excluded_channels": ["Mexico"],
+                },
                 "baseline_name": "naive_daily_lag_32",
                 "baseline_metrics": {
                     "mae": round(float(baseline_mae), 4),
