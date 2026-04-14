@@ -15,6 +15,44 @@ from app.models.external_variable import ExternalVariable
 BASE_DIR = Path(__file__).resolve().parents[2]
 MODEL_DIR = BASE_DIR / "data" / "models"
 
+CHANNEL_BUSINESS_HOURS = {
+    "choice": {"start_minute": 0, "end_minute": 990},   # 00:00 – 16:30
+    "españa": {"start_minute": 0, "end_minute": 990},   # 00:00 – 16:30
+}
+
+CHANNEL_SHIFTS = {
+    "choice": {
+        "morning":   (0, 12),    # 00:00 – 12:00
+        "afternoon": (12, 16),   # 12:00 – 16:30
+        "night":     None,       # No existe
+    },
+    "españa": {
+        "morning":   (0, 12),
+        "afternoon": (12, 16),
+        "night":     None,
+    },
+}
+
+
+def apply_business_hours_filter(df: pd.DataFrame, channel: str) -> pd.DataFrame:
+    channel_key = channel.strip().lower()
+    hours = CHANNEL_BUSINESS_HOURS.get(channel_key)
+    if hours is None:
+        return df
+    df = df.copy()
+    df["minute_of_day"] = df["datetime"].dt.hour * 60 + df["datetime"].dt.minute
+    mask = (
+        (df["minute_of_day"] >= hours["start_minute"]) &
+        (df["minute_of_day"] <= hours["end_minute"])
+    )
+    filtered = df[mask].drop(columns=["minute_of_day"]).reset_index(drop=True)
+    if filtered.empty:
+        raise ValueError(
+            f"El dataset del canal '{channel}' quedó vacío tras aplicar "
+            f"el filtro de horario operativo."
+        )
+    return filtered
+
 
 def slugify_channel(channel: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", channel.strip().lower()).strip("_")
@@ -137,6 +175,9 @@ def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
     df["campaign_day"] = pd.to_numeric(df["campaign_day"], errors="coerce").fillna(0.0)
     df["absenteeism_rate"] = pd.to_numeric(df["absenteeism_rate"], errors="coerce").fillna(0.0)
 
+    # Filtrar horario operativo ANTES de generar features/lags
+    df = apply_business_hours_filter(df, channel)
+
     # Variables temporales
     df["day_of_week"] = df["datetime"].dt.weekday
     df["month"] = df["datetime"].dt.month
@@ -156,16 +197,24 @@ def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
     df["minute_sin"] = np.sin(2 * np.pi * df["minute_of_day"] / 1440)
     df["minute_cos"] = np.cos(2 * np.pi * df["minute_of_day"] / 1440)
 
-    # Lags ajustados a ~32 registros por día
+    # Turnos dinámicos por canal
+    shifts = CHANNEL_SHIFTS.get(channel.strip().lower(), {
+        "morning": (6, 13), "afternoon": (14, 21), "night": None
+    })
+    df["is_morning_shift"]   = df["hour"].between(*shifts["morning"]).astype(int)
+    df["is_afternoon_shift"] = df["hour"].between(*shifts["afternoon"]).astype(int)
+    df["is_night_shift"]     = 0   # Choice/España no tienen turno noche
+
+    # 33 slots/día (Choice/España 00:00–16:30)
     df["lag_volume_1"] = df["volume"].shift(1)
     df["lag_volume_2"] = df["volume"].shift(2)
-    df["lag_volume_32"] = df["volume"].shift(32)
-    df["lag_volume_224"] = df["volume"].shift(224)
+    df["lag_volume_33"] = df["volume"].shift(33)
+    df["lag_volume_231"] = df["volume"].shift(231)
 
     # Rolling con solo pasado
     df["rolling_mean_3"] = df["volume"].shift(1).rolling(window=3).mean()
     df["rolling_mean_6"] = df["volume"].shift(1).rolling(window=6).mean()
-    df["rolling_mean_32"] = df["volume"].shift(1).rolling(window=32).mean()
+    df["rolling_mean_33"] = df["volume"].shift(1).rolling(window=33).mean()
 
     df["lag_aht_1"] = df["aht"].shift(1)
 

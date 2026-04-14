@@ -1,280 +1,290 @@
 {
   "channel": "Choice",
-  "mae": 7.5163,
-  "rmse": 9.2898,
-  "mape": 28.1519,
-  "wape": 17.2041,
-  "smape": 19.9165,
-  "r2": 0.6473,
-  "bias": 4.3024,
-  "train_size": 6516,
-  "validation_size": 1628,
-  "test_size": 2012,
+  "mae": 6.4934,
+  "rmse": 8.0848,
+  "mape": 17.0658,
+  "wape": 13.6716,
+  "smape": 15.1274,
+  "r2": 0.7511,
+  "bias": 3.1312,
+  "train_size": 6503,
+  "validation_size": 1625,
+  "test_size": 2008,
   "model_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_choice.keras",
   "scaler_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_choice_scaler.joblib",
   "metadata_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_choice_metadata.joblib",
-  "best_val_loss": 0.08829,
-  "model_version": "lstm_choice_v12_short_term_bias_aware",
+  "best_val_loss": 0.061291,
+  "model_version": "lstm_choice_v12_business_hours",
   "target_transform": "log1p",
-  "validation_bias": -2.0407,
+  "validation_bias": -1.4013,
   "bias_correction_factor": 0.35,
+  "business_rules": {
+    "trainable_channels": [
+      "Choice",
+      "España"
+    ],
+    "channel_operating_windows": {
+      "Choice": [
+        "00:00",
+        "16:30"
+      ],
+      "España": [
+        "00:00",
+        "16:30"
+      ]
+    },
+    "excluded_channels": [
+      "Mexico"
+    ]
+  },
   "baseline_name": "naive_daily_lag_32",
   "baseline_metrics": {
-    "mae": 10.4404,
-    "rmse": 13.8898,
-    "mape": 31.3232,
-    "wape": 23.8971,
-    "smape": 26.4429,
-    "r2": 0.2114,
-    "bias": 0.2346
+    "mae": 9.1355,
+    "rmse": 11.6955,
+    "mape": 19.9183,
+    "wape": 19.2344,
+    "smape": 19.7496,
+    "r2": 0.4791,
+    "bias": -0.0289
   },
   "shift_metrics": {
     "Manana (06-13)": {
       "n": 1008,
-      "mae": 6.8022,
-      "rmse": 8.4978,
-      "mape": 15.2191,
-      "wape": 13.4219,
-      "smape": 13.8653,
-      "bias": 2.7206
+      "mae": 6.2271,
+      "rmse": 7.9412,
+      "mape": 12.1267,
+      "wape": 11.2255,
+      "smape": 11.3576,
+      "bias": 2.1536
     },
     "Noche (22-05)": {
       "n": 622,
-      "mae": 8.6677,
-      "rmse": 10.2181,
-      "mape": 44.4462,
-      "wape": 25.6792,
-      "smape": 28.8492,
-      "bias": 7.7423
+      "mae": 7.3099,
+      "rmse": 8.7688,
+      "mape": 24.879,
+      "wape": 17.9812,
+      "smape": 20.4559,
+      "bias": 5.7742
     },
     "Tarde (14-21)": {
-      "n": 382,
-      "mae": 7.5256,
-      "rmse": 9.6949,
-      "mape": 35.7469,
-      "wape": 18.1694,
-      "smape": 21.3391,
-      "bias": 2.8756
+      "n": 378,
+      "mae": 5.8599,
+      "rmse": 7.2479,
+      "mape": 17.3799,
+      "wape": 15.634,
+      "smape": 16.4122,
+      "bias": 1.3893
     }
   },
   "day_metrics": {
     "0": {
-      "n": 289,
-      "mae": 7.4814,
-      "rmse": 9.3603,
-      "mape": 27.1978,
-      "wape": 16.8245,
-      "smape": 18.861,
-      "bias": 2.9103
+      "n": 288,
+      "mae": 6.1092,
+      "rmse": 7.6706,
+      "mape": 14.9927,
+      "wape": 12.4273,
+      "smape": 13.6594,
+      "bias": 1.5394
     },
     "1": {
-      "n": 289,
-      "mae": 7.3441,
-      "rmse": 9.0149,
-      "mape": 24.7621,
-      "wape": 14.3496,
-      "smape": 16.7092,
-      "bias": 2.5913
+      "n": 288,
+      "mae": 7.0079,
+      "rmse": 8.6315,
+      "mape": 15.0636,
+      "wape": 12.5047,
+      "smape": 13.7975,
+      "bias": 2.7653
     },
     "2": {
       "n": 288,
-      "mae": 8.0178,
-      "rmse": 9.9166,
-      "mape": 21.1366,
-      "wape": 16.0613,
-      "smape": 17.7677,
-      "bias": 5.0862
+      "mae": 8.3219,
+      "rmse": 10.2905,
+      "mape": 17.6448,
+      "wape": 14.8605,
+      "smape": 15.9833,
+      "bias": 3.7781
     },
     "3": {
       "n": 288,
-      "mae": 8.3906,
-      "rmse": 10.5654,
-      "mape": 38.3615,
-      "wape": 18.361,
-      "smape": 21.2766,
-      "bias": 5.7652
+      "mae": 6.8736,
+      "rmse": 8.5501,
+      "mape": 15.7417,
+      "wape": 13.2903,
+      "smape": 14.3482,
+      "bias": 3.4918
     },
     "4": {
-      "n": 290,
-      "mae": 7.7426,
-      "rmse": 9.2896,
-      "mape": 27.0081,
-      "wape": 17.4384,
-      "smape": 19.7823,
-      "bias": 4.5197
+      "n": 288,
+      "mae": 6.0725,
+      "rmse": 7.4496,
+      "mape": 16.2529,
+      "wape": 13.0474,
+      "smape": 14.3648,
+      "bias": 3.5432
     },
     "5": {
       "n": 288,
-      "mae": 6.9077,
-      "rmse": 8.3948,
-      "mape": 27.2196,
-      "wape": 19.0283,
-      "smape": 21.8941,
-      "bias": 4.5225
+      "mae": 5.3243,
+      "rmse": 6.5211,
+      "mape": 17.6632,
+      "wape": 13.8219,
+      "smape": 15.3823,
+      "bias": 2.7421
     },
     "6": {
       "n": 280,
-      "mae": 6.7062,
-      "rmse": 8.2457,
-      "mape": 31.4938,
-      "wape": 19.9949,
-      "smape": 23.2324,
-      "bias": 4.7434
+      "mae": 5.723,
+      "rmse": 6.8318,
+      "mape": 22.2455,
+      "wape": 16.7758,
+      "smape": 18.4489,
+      "bias": 4.0851
     }
   },
   "hour_metrics": {
     "1": {
       "n": 124,
-      "mae": 8.1545,
-      "rmse": 9.6779,
-      "mape": 101.5869,
-      "wape": 57.5174,
-      "smape": 49.6048,
-      "bias": 7.6787
+      "mae": 8.6492,
+      "rmse": 9.3386,
+      "mape": 55.0388,
+      "wape": 48.289,
+      "smape": 40.829,
+      "bias": 8.5937
     },
     "2": {
       "n": 124,
-      "mae": 9.726,
-      "rmse": 11.0673,
-      "mape": 52.0109,
-      "wape": 40.3486,
-      "smape": 36.3052,
-      "bias": 9.6978
+      "mae": 8.2734,
+      "rmse": 10.0926,
+      "mape": 25.6782,
+      "wape": 24.1333,
+      "smape": 21.8401,
+      "bias": 7.2835
     },
     "3": {
       "n": 124,
-      "mae": 8.1823,
-      "rmse": 9.8434,
-      "mape": 25.8538,
-      "wape": 21.5415,
-      "smape": 21.2841,
-      "bias": 7.0763
+      "mae": 7.2238,
+      "rmse": 8.7948,
+      "mape": 17.6017,
+      "wape": 15.5945,
+      "smape": 15.5473,
+      "bias": 6.1462
     },
     "4": {
       "n": 124,
-      "mae": 7.9419,
-      "rmse": 9.4474,
-      "mape": 20.0356,
-      "wape": 17.3624,
-      "smape": 17.3988,
-      "bias": 6.3546
+      "mae": 6.0397,
+      "rmse": 7.4928,
+      "mape": 12.9032,
+      "wape": 11.5557,
+      "smape": 11.8984,
+      "bias": 3.1644
     },
     "5": {
       "n": 126,
-      "mae": 9.3235,
-      "rmse": 10.9324,
-      "mape": 23.0882,
-      "wape": 20.0267,
-      "smape": 19.7991,
-      "bias": 7.9014
+      "mae": 6.3783,
+      "rmse": 7.8828,
+      "mape": 13.3589,
+      "wape": 12.197,
+      "smape": 12.2962,
+      "bias": 3.7162
     },
     "6": {
       "n": 126,
-      "mae": 6.9608,
-      "rmse": 8.3022,
-      "mape": 15.928,
-      "wape": 13.8666,
-      "smape": 14.31,
-      "bias": 4.5957
+      "mae": 6.6157,
+      "rmse": 8.2268,
+      "mape": 14.3776,
+      "wape": 12.5843,
+      "smape": 12.989,
+      "bias": 4.0871
     },
     "7": {
       "n": 126,
-      "mae": 6.4895,
-      "rmse": 7.8062,
-      "mape": 13.498,
-      "wape": 12.3144,
-      "smape": 12.6312,
-      "bias": 2.2432
+      "mae": 5.9868,
+      "rmse": 7.5112,
+      "mape": 11.3017,
+      "wape": 10.7104,
+      "smape": 10.6957,
+      "bias": 1.8371
     },
     "8": {
       "n": 126,
-      "mae": 7.0805,
-      "rmse": 8.4742,
-      "mape": 16.0124,
-      "wape": 14.3501,
-      "smape": 14.3387,
-      "bias": 5.6082
+      "mae": 7.0162,
+      "rmse": 8.6193,
+      "mape": 13.7695,
+      "wape": 12.5325,
+      "smape": 12.7193,
+      "bias": 2.9674
     },
     "9": {
       "n": 126,
-      "mae": 6.409,
-      "rmse": 7.8659,
-      "mape": 14.6788,
-      "wape": 12.2149,
-      "smape": 13.288,
-      "bias": 2.0579
+      "mae": 6.6488,
+      "rmse": 8.4665,
+      "mape": 12.3562,
+      "wape": 11.5457,
+      "smape": 11.6076,
+      "bias": 2.2695
     },
     "10": {
       "n": 126,
-      "mae": 8.3722,
-      "rmse": 10.3636,
-      "mape": 18.7017,
-      "wape": 16.5137,
-      "smape": 16.8699,
-      "bias": 3.3644
+      "mae": 6.3758,
+      "rmse": 8.4376,
+      "mape": 11.6794,
+      "wape": 10.9627,
+      "smape": 10.9742,
+      "bias": 1.8967
     },
     "11": {
       "n": 126,
-      "mae": 7.6172,
-      "rmse": 10.1475,
-      "mape": 17.8978,
-      "wape": 15.1983,
-      "smape": 15.8074,
-      "bias": 1.9607
+      "mae": 5.3056,
+      "rmse": 7.0097,
+      "mape": 10.1466,
+      "wape": 9.376,
+      "smape": 9.5052,
+      "bias": 2.3716
     },
     "12": {
       "n": 126,
-      "mae": 5.7372,
-      "rmse": 7.3848,
-      "mape": 11.9698,
-      "wape": 11.2775,
-      "smape": 11.4706,
-      "bias": 0.373
+      "mae": 6.042,
+      "rmse": 7.5387,
+      "mape": 12.0033,
+      "wape": 11.2484,
+      "smape": 11.2313,
+      "bias": 2.7646
     },
     "13": {
       "n": 126,
-      "mae": 5.7511,
-      "rmse": 7.0169,
-      "mape": 13.0666,
-      "wape": 11.7274,
-      "smape": 12.207,
-      "bias": 1.5614
+      "mae": 5.826,
+      "rmse": 7.5677,
+      "mape": 11.3795,
+      "wape": 10.9335,
+      "smape": 11.1387,
+      "bias": -0.9655
     },
     "14": {
       "n": 126,
-      "mae": 6.1384,
-      "rmse": 8.0939,
-      "mape": 16.8076,
-      "wape": 13.2234,
-      "smape": 14.2078,
-      "bias": 3.6793
+      "mae": 5.4854,
+      "rmse": 6.9111,
+      "mape": 13.8036,
+      "wape": 12.6355,
+      "smape": 12.5995,
+      "bias": 3.0864
     },
     "15": {
       "n": 126,
-      "mae": 7.2164,
-      "rmse": 9.0259,
-      "mape": 20.4041,
-      "wape": 16.3448,
-      "smape": 16.7776,
-      "bias": 4.4114
+      "mae": 5.5125,
+      "rmse": 6.643,
+      "mape": 15.5362,
+      "wape": 14.1491,
+      "smape": 14.5105,
+      "bias": 1.3165
     },
     "16": {
       "n": 126,
-      "mae": 9.0472,
-      "rmse": 11.4953,
-      "mape": 29.7936,
-      "wape": 25.8725,
-      "smape": 28.2609,
-      "bias": 0.2137
-    },
-    "17": {
-      "n": 4,
-      "mae": 13.0316,
-      "rmse": 13.5613,
-      "mape": 1303.1623,
-      "wape": 1303.1623,
-      "smape": 171.6313,
-      "bias": 13.0316
+      "mae": 6.5816,
+      "rmse": 8.1058,
+      "mape": 22.7999,
+      "wape": 21.8867,
+      "smape": 22.1267,
+      "bias": -0.2349
     }
   }
 }
