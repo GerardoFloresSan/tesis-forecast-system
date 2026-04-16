@@ -1,6 +1,5 @@
-from datetime import date, datetime, time
-
 from pydantic import BaseModel
+from datetime import date, time, datetime
 
 
 class ModelMetricsResponse(BaseModel):
@@ -19,9 +18,6 @@ class BaselinePredictionRequest(BaseModel):
     channel: str
     aht: float = 0.0
     is_holiday: float = 0.0
-    is_holiday_peru: float | None = None
-    is_holiday_spain: float = 0.0
-    is_holiday_mexico: float = 0.0
     campaign_day: float = 0.0
     absenteeism_rate: float = 0.0
 
@@ -42,6 +38,16 @@ class ModelSavedResponse(BaseModel):
     r2: float
 
 
+class BaselineMetricsSummary(BaseModel):
+    name: str | None = None
+    mae: float | None = None
+    rmse: float | None = None
+    mape: float | None = None
+    wape: float | None = None
+    smape: float | None = None
+    bias: float | None = None
+
+
 class LstmTrainResponse(BaseModel):
     message: str
     run_id: int
@@ -58,6 +64,14 @@ class LstmTrainResponse(BaseModel):
     scaler_path: str
     metadata_path: str
     metrics_path: str
+    wape: float | None = None
+    smape: float | None = None
+    bias: float | None = None
+    best_val_loss: float | None = None
+    time_steps: int | None = None
+    slots_per_day: int | None = None
+    model_version: str | None = None
+    baseline: BaselineMetricsSummary | None = None
 
 
 class LstmMetricsResponse(BaseModel):
@@ -72,6 +86,14 @@ class LstmMetricsResponse(BaseModel):
     scaler_path: str
     metadata_path: str
     metrics_path: str
+    wape: float | None = None
+    smape: float | None = None
+    bias: float | None = None
+    best_val_loss: float | None = None
+    time_steps: int | None = None
+    slots_per_day: int | None = None
+    model_version: str | None = None
+    baseline: BaselineMetricsSummary | None = None
 
 
 class LstmStatusResponse(BaseModel):

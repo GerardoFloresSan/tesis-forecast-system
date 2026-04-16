@@ -4,51 +4,21 @@ import json
 import os
 import subprocess
 import sys
-import unicodedata
 from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from app.models.model_train_run import ModelTrainRun
+from app.utils.channel_rules import canonicalize_channel, slugify_channel
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 MODEL_DIR = BASE_DIR / "data" / "models"
-ALLOWED_CHANNELS = {
-    "choice": "Choice",
-    "espana": "España",
-}
-
-
-def _normalize_channel_key(channel: str) -> str:
-    normalized = unicodedata.normalize("NFKD", (channel or "").strip())
-    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
-    normalized = normalized.lower()
-    normalized = " ".join(normalized.split())
-    return normalized
-
-
-def slugify_channel(channel: str) -> str:
-    return _normalize_channel_key(channel).replace(" ", "_")
-
-
-def _validate_channel(channel: str) -> str:
-    channel_key = _normalize_channel_key(channel)
-    canonical = ALLOWED_CHANNELS.get(channel_key)
-
-    if canonical is None:
-        allowed = ", ".join(ALLOWED_CHANNELS.values())
-        raise ValueError(
-            f"Canal '{channel}' no permitido para entrenamiento LSTM. "
-            f"Canales permitidos: {allowed}."
-        )
-
-    return canonical
 
 
 def _build_paths(channel: str) -> dict:
-    canonical_channel = _validate_channel(channel)
+    canonical_channel = canonicalize_channel(channel)
     channel_slug = slugify_channel(canonical_channel)
 
     return {
@@ -64,7 +34,6 @@ def _resolve_python_executable() -> str:
         venv_python = BASE_DIR / ".venv" / "Scripts" / "python.exe"
         if venv_python.exists():
             return str(venv_python)
-
     return sys.executable
 
 
@@ -95,7 +64,6 @@ def _mark_run_success(db: Session, run: ModelTrainRun, metrics: dict):
     run.metrics_path = metrics["metrics_path"]
     run.error_message = None
     run.finished_at = datetime.utcnow()
-
     db.commit()
     db.refresh(run)
 
@@ -104,15 +72,13 @@ def _mark_run_failed(db: Session, run: ModelTrainRun, error_message: str):
     run.status = "failed"
     run.error_message = error_message
     run.finished_at = datetime.utcnow()
-
     db.commit()
     db.refresh(run)
 
 
 def get_lstm_status(channel: str = "Choice") -> dict:
-    canonical_channel = _validate_channel(channel)
+    canonical_channel = canonicalize_channel(channel)
     paths = _build_paths(canonical_channel)
-
     return {
         "channel": canonical_channel,
         "model_exists": paths["model_path"].exists(),
@@ -123,7 +89,7 @@ def get_lstm_status(channel: str = "Choice") -> dict:
 
 
 def get_lstm_metrics(channel: str = "Choice") -> dict:
-    canonical_channel = _validate_channel(channel)
+    canonical_channel = canonicalize_channel(channel)
     paths = _build_paths(canonical_channel)
 
     if not paths["metrics_path"].exists():
@@ -134,6 +100,8 @@ def get_lstm_metrics(channel: str = "Choice") -> dict:
 
     with open(paths["metrics_path"], "r", encoding="utf-8") as f:
         metrics = json.load(f)
+
+    baseline_metrics = metrics.get("baseline_metrics", {}) or {}
 
     return {
         "channel": metrics.get("channel", canonical_channel),
@@ -147,11 +115,27 @@ def get_lstm_metrics(channel: str = "Choice") -> dict:
         "scaler_path": metrics["scaler_path"],
         "metadata_path": metrics["metadata_path"],
         "metrics_path": str(paths["metrics_path"]),
+        "wape": metrics.get("wape"),
+        "smape": metrics.get("smape"),
+        "bias": metrics.get("bias"),
+        "best_val_loss": metrics.get("best_val_loss"),
+        "time_steps": metrics.get("time_steps"),
+        "slots_per_day": metrics.get("slots_per_day"),
+        "model_version": metrics.get("model_version"),
+        "baseline": {
+            "name": metrics.get("baseline_name"),
+            "mae": baseline_metrics.get("mae"),
+            "rmse": baseline_metrics.get("rmse"),
+            "mape": baseline_metrics.get("mape"),
+            "wape": baseline_metrics.get("wape"),
+            "smape": baseline_metrics.get("smape"),
+            "bias": baseline_metrics.get("bias"),
+        },
     }
 
 
 def train_lstm_model(db: Session, channel: str = "Choice", run_type: str = "train") -> dict:
-    canonical_channel = _validate_channel(channel)
+    canonical_channel = canonicalize_channel(channel)
     run = _create_run_record(db, canonical_channel, run_type)
 
     python_executable = _resolve_python_executable()
@@ -204,16 +188,10 @@ def retrain_lstm_model(db: Session, channel: str = "Choice") -> dict:
 
 def get_lstm_history(db: Session, channel: str | None = None, limit: int = 50) -> list[dict]:
     query = db.query(ModelTrainRun)
-
     if channel:
-        query = query.filter(ModelTrainRun.channel == _validate_channel(channel))
+        query = query.filter(ModelTrainRun.channel == canonicalize_channel(channel))
 
-    rows = (
-        query.order_by(ModelTrainRun.created_at.desc())
-        .limit(limit)
-        .all()
-    )
-
+    rows = query.order_by(ModelTrainRun.created_at.desc()).limit(limit).all()
     return [
         {
             "id": row.id,
@@ -239,20 +217,18 @@ def get_lstm_history(db: Session, channel: str | None = None, limit: int = 50) -
     ]
 
 
-def check_and_retrain_lstm(
-    db: Session,
-    channel: str = "Choice",
-    threshold_mape: float = 15.0,
-) -> dict:
-    canonical_channel = _validate_channel(channel)
+def check_and_retrain_lstm(db: Session, channel: str = "Choice", threshold_mape: float = 15.0) -> dict:
+    canonical_channel = canonicalize_channel(channel)
     status = get_lstm_status(canonical_channel)
 
-    if not all([
-        status["model_exists"],
-        status["scaler_exists"],
-        status["metadata_exists"],
-        status["metrics_exists"],
-    ]):
+    if not all(
+        [
+            status["model_exists"],
+            status["scaler_exists"],
+            status["metadata_exists"],
+            status["metrics_exists"],
+        ]
+    ):
         result = train_lstm_model(db=db, channel=canonical_channel, run_type="train")
         return {
             "channel": canonical_channel,

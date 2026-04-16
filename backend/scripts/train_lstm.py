@@ -1,10 +1,10 @@
+from __future__ import annotations
+
 import argparse
 import json
 import math
 import os
 import random
-import re
-import unicodedata
 from pathlib import Path
 
 os.environ.pop("TF_USE_LEGACY_KERAS", None)
@@ -13,9 +13,9 @@ import joblib
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from sqlalchemy import create_engine
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.preprocessing import RobustScaler, StandardScaler
+from sqlalchemy import create_engine
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
 from tensorflow.keras.losses import Huber
@@ -23,55 +23,23 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.optimizers import Adam
 
 from app.core.config import settings
+from app.utils.channel_rules import (
+    apply_business_hours_filter,
+    canonicalize_channel,
+    get_shift_label,
+    get_slots_per_day,
+    slugify_channel,
+)
 
 DEFAULT_CHANNEL_TO_TRAIN = "Choice"
-
-TIME_STEPS = 32
-EPOCHS = 100
+EPOCHS = 60
 BATCH_SIZE = 32
 TRAIN_SPLIT = 0.8
 VALIDATION_SPLIT_WITHIN_TRAIN = 0.2
 RANDOM_SEED = 42
 BIAS_CORRECTION_FACTOR = 0.35
-
-TRAINABLE_CHANNELS = {"Choice", "España"}
-CHANNEL_OPERATING_WINDOWS = {
-    "Choice": ("00:00", "16:30"),
-    "España": ("00:00", "16:30"),
-}
-
 BASE_DIR = Path(__file__).resolve().parents[1]
 MODEL_DIR = BASE_DIR / "data" / "models"
-
-
-def _normalize_channel_key(channel: str) -> str:
-    normalized = unicodedata.normalize("NFKD", (channel or "").strip())
-    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
-    normalized = normalized.lower()
-    normalized = " ".join(normalized.split())
-    return normalized
-
-
-def canonicalize_channel(channel: str) -> str:
-    channel_key = _normalize_channel_key(channel)
-    channel_aliases = {
-        "choice": "Choice",
-        "espana": "España",
-    }
-    canonical = channel_aliases.get(channel_key)
-    if canonical is None or canonical not in TRAINABLE_CHANNELS:
-        raise ValueError(
-            f"Canal '{channel}' no permitido para entrenamiento. "
-            f"Canales permitidos: {sorted(TRAINABLE_CHANNELS)}"
-        )
-    return canonical
-
-
-def slugify_channel(channel: str) -> str:
-    normalized = unicodedata.normalize("NFKD", channel.strip())
-    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
-    normalized = normalized.lower()
-    return re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
 
 
 def set_seeds(seed: int = RANDOM_SEED):
@@ -89,98 +57,58 @@ def calculate_mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(
         np.mean(
             np.abs((y_true[non_zero_mask] - y_pred[non_zero_mask]) / y_true[non_zero_mask])
-        ) * 100
+        )
+        * 100
     )
 
 
 def calculate_wape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    y_true = np.array(y_true, dtype=float)
-    y_pred = np.array(y_pred, dtype=float)
-    denominator = np.sum(np.abs(y_true))
+    denominator = float(np.sum(np.abs(y_true)))
     if denominator == 0:
         return 0.0
     return float(np.sum(np.abs(y_true - y_pred)) / denominator * 100)
 
 
 def calculate_smape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    y_true = np.array(y_true, dtype=float)
-    y_pred = np.array(y_pred, dtype=float)
     denominator = np.abs(y_true) + np.abs(y_pred)
     valid_mask = denominator > 0
-
     if not np.any(valid_mask):
         return 0.0
-
     return float(
-        np.mean(
-            2.0 * np.abs(y_pred[valid_mask] - y_true[valid_mask]) / denominator[valid_mask]
-        ) * 100
+        np.mean(2.0 * np.abs(y_pred[valid_mask] - y_true[valid_mask]) / denominator[valid_mask])
+        * 100
     )
 
 
 def calculate_bias(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    y_true = np.array(y_true, dtype=float)
-    y_pred = np.array(y_pred, dtype=float)
-    return float(np.mean(y_pred - y_true))
+    return float(np.mean(np.array(y_pred, dtype=float) - np.array(y_true, dtype=float)))
 
 
 def create_sequences(features: np.ndarray, target: np.ndarray, time_steps: int):
     X, y = [], []
-
-    for i in range(len(features) - time_steps):
-        X.append(features[i : i + time_steps])
-        y.append(target[i + time_steps])
-
+    for index in range(len(features) - time_steps):
+        X.append(features[index : index + time_steps])
+        y.append(target[index + time_steps])
     return np.array(X), np.array(y)
 
 
-def time_str_to_minutes(value: str) -> int:
-    parsed = pd.to_datetime(str(value), errors="coerce")
-    if pd.isna(parsed):
-        raise ValueError(f"No se pudo interpretar la hora: {value}")
-    return int(parsed.hour * 60 + parsed.minute)
+def inverse_target_transform(y_scaled: np.ndarray, y_scaler: StandardScaler) -> np.ndarray:
+    y_scaled = np.array(y_scaled).reshape(-1, 1)
+    y_log = y_scaler.inverse_transform(y_scaled).flatten()
+    y_real = np.expm1(y_log)
+    return np.maximum(y_real, 0.0)
 
 
-def apply_channel_business_rules(hist_df: pd.DataFrame, channel: str) -> pd.DataFrame:
-    if channel not in TRAINABLE_CHANNELS:
-        raise ValueError(
-            f"El canal '{channel}' está fuera del entrenamiento por reglas de negocio. "
-            f"Canales permitidos: {sorted(TRAINABLE_CHANNELS)}"
-        )
+def _normalize_external_variables(ext_df: pd.DataFrame) -> pd.DataFrame:
+    if ext_df.empty:
+        return ext_df
 
-    if channel not in CHANNEL_OPERATING_WINDOWS:
-        return hist_df.copy()
-
-    start_str, end_str = CHANNEL_OPERATING_WINDOWS[channel]
-    start_minutes = time_str_to_minutes(start_str)
-    end_minutes = time_str_to_minutes(end_str)
-
-    df = hist_df.copy()
-    parsed_times = pd.to_datetime(df["interval_time"].astype(str), errors="coerce")
-
-    if parsed_times.isna().any():
-        invalid_count = int(parsed_times.isna().sum())
-        raise ValueError(
-            f"Se encontraron {invalid_count} registros con interval_time inválido."
-        )
-
-    df["_interval_minutes"] = parsed_times.dt.hour * 60 + parsed_times.dt.minute
-
-    before_count = len(df)
-    df = df[
-        (df["_interval_minutes"] >= start_minutes)
-        & (df["_interval_minutes"] <= end_minutes)
-    ].copy()
-    after_count = len(df)
-
-    removed = before_count - after_count
-    print(
-        f"Regla de negocio aplicada para {channel}: {start_str} a {end_str}. "
-        f"Registros removidos fuera de horario: {removed}"
-    )
-
-    df.drop(columns=["_interval_minutes"], inplace=True, errors="ignore")
-    return df
+    ext_df = ext_df.copy()
+    ext_df["variable_date"] = pd.to_datetime(ext_df["variable_date"]).dt.date
+    ext_df["variable_type"] = ext_df["variable_type"].astype(str).str.strip().str.lower()
+    ext_df["variable_value"] = pd.to_numeric(ext_df["variable_value"], errors="coerce").fillna(0.0)
+    ext_df["variable_type"] = ext_df["variable_type"].replace({"is_holiday": "is_holiday_peru"})
+    return ext_df
 
 
 def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
@@ -192,6 +120,7 @@ def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
             volume,
             aht
         FROM historical_interactions
+        WHERE channel = %(channel)s
         ORDER BY interaction_date, interval_time
     """
 
@@ -204,13 +133,8 @@ def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
         ORDER BY variable_date
     """
 
-    hist_df = pd.read_sql(historical_query, engine)
+    hist_df = pd.read_sql(historical_query, engine, params={"channel": channel})
     ext_df = pd.read_sql(external_query, engine)
-
-    if hist_df.empty:
-        raise ValueError("No hay datos en historical_interactions.")
-
-    hist_df = hist_df[hist_df["channel"] == channel].copy()
 
     if hist_df.empty:
         raise ValueError(f"No hay datos para el canal '{channel}'.")
@@ -218,14 +142,11 @@ def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
     hist_df["interaction_date"] = pd.to_datetime(hist_df["interaction_date"]).dt.date
     hist_df["volume"] = pd.to_numeric(hist_df["volume"], errors="coerce").fillna(0.0)
     hist_df["aht"] = pd.to_numeric(hist_df["aht"], errors="coerce").fillna(0.0)
+    hist_df["datetime"] = pd.to_datetime(
+        hist_df["interaction_date"].astype(str) + " " + hist_df["interval_time"].astype(str)
+    )
 
-    hist_df = apply_channel_business_rules(hist_df, channel)
-
-    if hist_df.empty:
-        raise ValueError(
-            f"No quedaron registros para el canal '{channel}' después de aplicar el horario operativo."
-        )
-
+    hist_df = apply_business_hours_filter(hist_df, channel)
     hist_df = hist_df.drop_duplicates(
         subset=["interaction_date", "interval_time", "channel", "volume", "aht"]
     )
@@ -233,40 +154,31 @@ def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
     duplicate_slots = hist_df.duplicated(
         subset=["interaction_date", "interval_time", "channel"], keep=False
     ).sum()
-
     if duplicate_slots > 0:
-        print(
-            f"Advertencia: se detectaron {duplicate_slots} filas en slots duplicados. "
-            "Se consolidarán por fecha/hora/canal."
-        )
         hist_df = (
-            hist_df.groupby(["interaction_date", "interval_time", "channel"], as_index=False)
-            .agg(
-                volume=("volume", "sum"),
-                aht=("aht", "median"),
-            )
+            hist_df.groupby(["interaction_date", "interval_time", "channel", "datetime"], as_index=False)
+            .agg(volume=("volume", "sum"), aht=("aht", "median"))
+            .sort_values("datetime")
+            .reset_index(drop=True)
         )
 
-    holiday_columns = {
-        "is_holiday": "is_holiday_peru",
-        "is_holiday_peru": "is_holiday_peru",
-        "is_holiday_spain": "is_holiday_spain",
-        "is_holiday_mexico": "is_holiday_mexico",
-        "campaign_day": "campaign_day",
-        "absenteeism_rate": "absenteeism_rate",
-    }
-
+    ext_df = _normalize_external_variables(ext_df)
     external_features = pd.DataFrame(
         {"interaction_date": hist_df["interaction_date"].drop_duplicates().sort_values()}
     )
 
     if not ext_df.empty:
-        ext_df["variable_date"] = pd.to_datetime(ext_df["variable_date"]).dt.date
-        ext_df["variable_type"] = ext_df["variable_type"].astype(str).str.strip().str.lower()
-        ext_df["variable_value"] = pd.to_numeric(ext_df["variable_value"], errors="coerce").fillna(0.0)
-        ext_df["variable_type"] = ext_df["variable_type"].replace(holiday_columns)
-
-        ext_df = ext_df[ext_df["variable_type"].isin(holiday_columns.values())].copy()
+        ext_df = ext_df[
+            ext_df["variable_type"].isin(
+                [
+                    "is_holiday_peru",
+                    "is_holiday_spain",
+                    "is_holiday_mexico",
+                    "campaign_day",
+                    "absenteeism_rate",
+                ]
+            )
+        ].copy()
 
         if not ext_df.empty:
             pivot = (
@@ -280,13 +192,15 @@ def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
                 .reset_index()
                 .rename(columns={"variable_date": "interaction_date"})
             )
-            external_features = external_features.merge(
-                pivot,
-                on="interaction_date",
-                how="left",
-            )
+            external_features = external_features.merge(pivot, on="interaction_date", how="left")
 
-    for column in holiday_columns.values():
+    for column in [
+        "is_holiday_peru",
+        "is_holiday_spain",
+        "is_holiday_mexico",
+        "campaign_day",
+        "absenteeism_rate",
+    ]:
         if column not in external_features.columns:
             external_features[column] = 0.0
 
@@ -294,86 +208,137 @@ def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
         ["is_holiday_peru", "is_holiday_spain", "is_holiday_mexico"]
     ].max(axis=1)
 
-    dataset = hist_df.merge(external_features, on="interaction_date", how="left")
-
-    numeric_fill_columns = [
-        "aht",
-        "is_holiday_peru",
-        "is_holiday_spain",
-        "is_holiday_mexico",
-        "is_holiday_any",
-        "campaign_day",
-        "absenteeism_rate",
-    ]
-    for column in numeric_fill_columns:
-        dataset[column] = pd.to_numeric(dataset[column], errors="coerce").fillna(0.0)
-
-    dataset["datetime"] = pd.to_datetime(
-        dataset["interaction_date"].astype(str) + " " + dataset["interval_time"].astype(str)
+    df = hist_df.merge(external_features, on="interaction_date", how="left")
+    df["datetime"] = pd.to_datetime(
+        df["interaction_date"].astype(str) + " " + df["interval_time"].astype(str)
     )
-    dataset = dataset.sort_values("datetime").reset_index(drop=True)
-    dataset["day_of_week"] = dataset["datetime"].dt.dayofweek
-    dataset["month"] = dataset["datetime"].dt.month
+    df = df.sort_values("datetime").reset_index(drop=True)
 
-    return dataset
-
-
-def build_feature_matrix(dataset: pd.DataFrame):
-    feature_columns = [
+    for column in [
         "volume",
         "aht",
-        "day_of_week",
-        "month",
         "is_holiday_peru",
         "is_holiday_spain",
         "is_holiday_mexico",
         "is_holiday_any",
         "campaign_day",
         "absenteeism_rate",
+    ]:
+        df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0.0)
+
+    return df
+
+
+def add_time_and_lag_features(df: pd.DataFrame, channel: str) -> tuple[pd.DataFrame, int, int]:
+    enriched = df.copy()
+    slots_per_day = get_slots_per_day(channel)
+    time_steps = slots_per_day
+    lag_one_day = slots_per_day
+    lag_one_week = slots_per_day * 7
+
+    enriched["day_of_week"] = enriched["datetime"].dt.weekday
+    enriched["month"] = enriched["datetime"].dt.month
+    enriched["day"] = enriched["datetime"].dt.day
+    enriched["hour"] = enriched["datetime"].dt.hour
+    enriched["minute"] = enriched["datetime"].dt.minute
+    enriched["is_weekend"] = (enriched["day_of_week"] >= 5).astype(int)
+    enriched["minute_of_day"] = enriched["hour"] * 60 + enriched["minute"]
+    enriched["slot_index"] = enriched.groupby(enriched["datetime"].dt.date).cumcount()
+    enriched["slot_sin"] = np.sin(2 * np.pi * enriched["slot_index"] / slots_per_day)
+    enriched["slot_cos"] = np.cos(2 * np.pi * enriched["slot_index"] / slots_per_day)
+
+    enriched["shift_label"] = enriched["minute_of_day"].apply(lambda value: get_shift_label(channel, int(value)))
+    enriched["is_morning_shift"] = (enriched["shift_label"] == "morning").astype(int)
+    enriched["is_afternoon_shift"] = (enriched["shift_label"] == "afternoon").astype(int)
+
+    enriched["dow_sin"] = np.sin(2 * np.pi * enriched["day_of_week"] / 7)
+    enriched["dow_cos"] = np.cos(2 * np.pi * enriched["day_of_week"] / 7)
+    enriched["month_sin"] = np.sin(2 * np.pi * enriched["month"] / 12)
+    enriched["month_cos"] = np.cos(2 * np.pi * enriched["month"] / 12)
+    enriched["minute_sin"] = np.sin(2 * np.pi * enriched["minute_of_day"] / 1440)
+    enriched["minute_cos"] = np.cos(2 * np.pi * enriched["minute_of_day"] / 1440)
+
+    enriched["lag_volume_1"] = enriched["volume"].shift(1)
+    enriched["lag_volume_2"] = enriched["volume"].shift(2)
+    enriched["lag_volume_1_day"] = enriched["volume"].shift(lag_one_day)
+    enriched["lag_volume_1_week"] = enriched["volume"].shift(lag_one_week)
+
+    enriched["rolling_mean_3"] = enriched["volume"].shift(1).rolling(window=3).mean()
+    enriched["rolling_mean_6"] = enriched["volume"].shift(1).rolling(window=6).mean()
+    enriched["rolling_mean_1_day"] = enriched["volume"].shift(1).rolling(window=lag_one_day).mean()
+    enriched["rolling_std_6"] = enriched["volume"].shift(1).rolling(window=6).std()
+    enriched["rolling_std_1_day"] = enriched["volume"].shift(1).rolling(window=lag_one_day).std()
+    enriched["rolling_max_1_day"] = enriched["volume"].shift(1).rolling(window=lag_one_day).max()
+
+    enriched["lag_aht_1"] = enriched["aht"].shift(1)
+    enriched["volume_diff_1"] = enriched["volume"].diff(1)
+    enriched["volume_diff_1_day"] = enriched["volume"].diff(lag_one_day)
+    enriched["volume_ratio_rolling_1_day"] = enriched["volume"] / (enriched["rolling_mean_1_day"] + 1.0)
+
+    enriched = enriched.dropna().reset_index(drop=True)
+    if enriched.empty:
+        raise ValueError("Después de generar lags y rolling, el dataset quedó vacío.")
+
+    return enriched, slots_per_day, time_steps
+
+
+def build_feature_columns() -> list[str]:
+    return [
+        "volume",
+        "aht",
+        "is_holiday_peru",
+        "is_holiday_spain",
+        "is_holiday_mexico",
+        "is_holiday_any",
+        "campaign_day",
+        "absenteeism_rate",
+        "is_weekend",
+        "is_morning_shift",
+        "is_afternoon_shift",
+        "dow_sin",
+        "dow_cos",
+        "month_sin",
+        "month_cos",
+        "minute_sin",
+        "minute_cos",
+        "slot_sin",
+        "slot_cos",
+        "lag_volume_1",
+        "lag_volume_2",
+        "lag_volume_1_day",
+        "lag_volume_1_week",
+        "rolling_mean_3",
+        "rolling_mean_6",
+        "rolling_mean_1_day",
+        "rolling_std_6",
+        "rolling_std_1_day",
+        "rolling_max_1_day",
+        "lag_aht_1",
+        "volume_diff_1",
+        "volume_diff_1_day",
+        "volume_ratio_rolling_1_day",
     ]
-
-    target_column = "volume"
-
-    scaler = RobustScaler()
-    scaled_features = scaler.fit_transform(dataset[feature_columns])
-
-    X, y = create_sequences(
-        features=scaled_features,
-        target=dataset[target_column].values,
-        time_steps=TIME_STEPS,
-    )
-
-    if len(X) == 0:
-        raise ValueError(
-            "No se pudieron generar secuencias para entrenamiento. "
-            "Revisa volumen de datos y TIME_STEPS."
-        )
-
-    return X, y, scaler, feature_columns
 
 
 def build_lstm_model(input_shape):
-    model = Sequential([
-        Input(shape=input_shape),
-        LSTM(64, return_sequences=True),
-        Dropout(0.2),
-        LSTM(32, return_sequences=False),
-        Dropout(0.2),
-        Dense(16, activation="relu"),
-        Dense(1),
-    ])
-
-    model.compile(
-        optimizer=Adam(learning_rate=0.001),
-        loss=Huber(),
-        metrics=["mae"],
+    model = Sequential(
+        [
+            Input(shape=input_shape),
+            LSTM(64, return_sequences=True),
+            Dropout(0.2),
+            LSTM(32, return_sequences=False),
+            Dropout(0.2),
+            Dense(32, activation="relu"),
+            Dense(16, activation="relu"),
+            Dense(1),
+        ]
     )
+    model.compile(optimizer=Adam(learning_rate=0.001, clipnorm=1.0), loss=Huber())
     return model
 
 
-def save_artifacts(channel: str, model, scaler, metadata: dict, metrics: dict):
+def save_artifacts(channel: str, model, x_scaler, y_scaler, metadata: dict, metrics: dict):
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-
     channel_slug = slugify_channel(channel)
     model_path = MODEL_DIR / f"lstm_{channel_slug}.keras"
     scaler_path = MODEL_DIR / f"lstm_{channel_slug}_scaler.joblib"
@@ -381,8 +346,13 @@ def save_artifacts(channel: str, model, scaler, metadata: dict, metrics: dict):
     metrics_path = MODEL_DIR / f"lstm_{channel_slug}_metrics.json"
 
     model.save(model_path)
-    joblib.dump(scaler, scaler_path)
+    joblib.dump({"x_scaler": x_scaler, "y_scaler": y_scaler}, scaler_path)
     joblib.dump(metadata, metadata_path)
+
+    metrics["model_path"] = str(model_path)
+    metrics["scaler_path"] = str(scaler_path)
+    metrics["metadata_path"] = str(metadata_path)
+    metrics["metrics_path"] = str(metrics_path)
 
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
@@ -392,108 +362,145 @@ def save_artifacts(channel: str, model, scaler, metadata: dict, metrics: dict):
 
 def main(channel: str):
     set_seeds()
-    channel = canonicalize_channel(channel)
+    canonical_channel = canonicalize_channel(channel)
 
-    print(f"Iniciando entrenamiento LSTM para canal: {channel}")
-
+    print(f"Iniciando entrenamiento LSTM para canal: {canonical_channel}")
     engine = create_engine(settings.DATABASE_URL)
-    dataset = load_and_prepare_dataset(engine, channel)
 
-    print(f"Dataset preparado. Registros: {len(dataset)}")
+    base_df = load_and_prepare_dataset(engine, canonical_channel)
+    df, slots_per_day, time_steps = add_time_and_lag_features(base_df, canonical_channel)
+    feature_columns = build_feature_columns()
 
-    X, y, scaler, feature_columns = build_feature_matrix(dataset)
+    dataset = df[feature_columns].copy()
+    target = np.log1p(df[["volume"]].copy())
 
-    train_size = max(1, int(len(X) * TRAIN_SPLIT))
-    X_train, X_test = X[:train_size], X[train_size:]
-    y_train, y_test = y[:train_size], y[train_size:]
+    split_index = int(len(dataset) * TRAIN_SPLIT)
+    train_features = dataset.iloc[:split_index].copy()
+    test_features = dataset.iloc[split_index:].copy()
+    train_target = target.iloc[:split_index].copy()
+    test_target = target.iloc[split_index:].copy()
 
-    if len(X_test) == 0:
-        X_train, X_test = X[:-1], X[-1:]
-        y_train, y_test = y[:-1], y[-1:]
+    if len(train_features) <= time_steps or len(test_features) <= time_steps:
+        raise ValueError("No hay suficientes datos para train/test con el TIME_STEPS actual.")
+
+    x_scaler = RobustScaler()
+    y_scaler = StandardScaler()
+    train_features_scaled = x_scaler.fit_transform(train_features)
+    test_features_scaled = x_scaler.transform(test_features)
+    train_target_scaled = y_scaler.fit_transform(train_target)
+    test_target_scaled = y_scaler.transform(test_target)
+
+    X_train_full, y_train_full = create_sequences(train_features_scaled, train_target_scaled, time_steps)
+    X_test, y_test = create_sequences(test_features_scaled, test_target_scaled, time_steps)
+
+    if len(X_train_full) == 0 or len(X_test) == 0:
+        raise ValueError("No hay suficientes datos para crear secuencias LSTM.")
+
+    val_size = max(1, int(len(X_train_full) * VALIDATION_SPLIT_WITHIN_TRAIN))
+    if val_size >= len(X_train_full):
+        val_size = 1
+
+    X_train = X_train_full[:-val_size]
+    y_train = y_train_full[:-val_size]
+    X_val = X_train_full[-val_size:]
+    y_val = y_train_full[-val_size:]
 
     model = build_lstm_model((X_train.shape[1], X_train.shape[2]))
 
-    callbacks = [
-        EarlyStopping(
-            monitor="val_loss",
-            patience=10,
-            restore_best_weights=True,
-            verbose=1,
-        ),
-        ReduceLROnPlateau(
-            monitor="val_loss",
-            factor=0.5,
-            patience=5,
-            min_lr=1e-5,
-            verbose=1,
-        ),
-    ]
-
-    validation_split = VALIDATION_SPLIT_WITHIN_TRAIN
-    if len(X_train) < 10:
-        validation_split = 0.0
+    early_stopping = EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True)
+    reduce_lr = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=4, min_lr=1e-5, verbose=1)
 
     history = model.fit(
         X_train,
         y_train,
+        validation_data=(X_val, y_val),
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
-        validation_split=validation_split,
-        callbacks=callbacks,
+        callbacks=[early_stopping, reduce_lr],
         verbose=1,
+        shuffle=False,
     )
 
-    y_pred = model.predict(X_test, verbose=0).flatten()
-    y_pred = np.maximum(y_pred, 0.0)
+    y_val_pred_scaled = model.predict(X_val, verbose=0).flatten()
+    y_val_pred_inv = inverse_target_transform(y_val_pred_scaled, y_scaler)
+    y_val_inv = inverse_target_transform(y_val.flatten(), y_scaler)
+    validation_bias = calculate_bias(y_val_inv, y_val_pred_inv)
 
-    bias = calculate_bias(y_test, y_pred)
-    y_pred_corrected = np.maximum(y_pred - (bias * BIAS_CORRECTION_FACTOR), 0.0)
+    y_pred_scaled = model.predict(X_test, verbose=0).flatten()
+    y_pred_inv = inverse_target_transform(y_pred_scaled, y_scaler)
+    y_test_inv = inverse_target_transform(y_test.flatten(), y_scaler)
+    y_pred_inv = np.maximum(y_pred_inv - (validation_bias * BIAS_CORRECTION_FACTOR), 0.0)
 
-    mae = float(mean_absolute_error(y_test, y_pred_corrected))
-    rmse = float(math.sqrt(mean_squared_error(y_test, y_pred_corrected)))
-    mape = float(calculate_mape(y_test, y_pred_corrected))
-    r2 = float(r2_score(y_test, y_pred_corrected)) if len(y_test) > 1 else 0.0
-    wape = float(calculate_wape(y_test, y_pred_corrected))
-    smape = float(calculate_smape(y_test, y_pred_corrected))
+    mae = float(mean_absolute_error(y_test_inv, y_pred_inv))
+    rmse = float(math.sqrt(mean_squared_error(y_test_inv, y_pred_inv)))
+    r2 = float(r2_score(y_test_inv, y_pred_inv)) if len(y_test_inv) > 1 else 0.0
+    mape = float(calculate_mape(y_test_inv, y_pred_inv))
+    wape = float(calculate_wape(y_test_inv, y_pred_inv))
+    smape = float(calculate_smape(y_test_inv, y_pred_inv))
+    bias = float(calculate_bias(y_test_inv, y_pred_inv))
+
+    baseline_test_df = df.iloc[split_index:].copy().reset_index(drop=True)
+    baseline_real = baseline_test_df["volume"].iloc[time_steps:].values
+    baseline_pred = baseline_test_df["lag_volume_1_day"].iloc[time_steps:].values
+    baseline_pred = np.maximum(baseline_pred, 0.0)
+
+    baseline_metrics = {
+        "mae": round(float(mean_absolute_error(baseline_real, baseline_pred)), 4),
+        "rmse": round(float(math.sqrt(mean_squared_error(baseline_real, baseline_pred))), 4),
+        "mape": round(float(calculate_mape(baseline_real, baseline_pred)), 4),
+        "wape": round(float(calculate_wape(baseline_real, baseline_pred)), 4),
+        "smape": round(float(calculate_smape(baseline_real, baseline_pred)), 4),
+        "bias": round(float(calculate_bias(baseline_real, baseline_pred)), 4),
+    }
+
+    best_val_loss = min(history.history.get("val_loss", []) or [0.0])
+    model_version = f"lstm_{slugify_channel(canonical_channel)}_v2_operational"
 
     metadata = {
-        "channel": channel,
-        "time_steps": TIME_STEPS,
+        "channel": canonical_channel,
         "feature_columns": feature_columns,
-        "bias_correction_factor": BIAS_CORRECTION_FACTOR,
-        "train_split": TRAIN_SPLIT,
-        "validation_split_within_train": VALIDATION_SPLIT_WITHIN_TRAIN,
+        "time_steps": time_steps,
+        "slots_per_day": slots_per_day,
+        "epochs_configured": EPOCHS,
+        "batch_size": BATCH_SIZE,
+        "train_size": int(len(X_train)),
+        "validation_size": int(len(X_val)),
+        "test_size": int(len(X_test)),
+        "best_val_loss": float(best_val_loss),
+        "model_version": model_version,
+        "target_transform": "log1p",
+        "validation_bias": float(validation_bias),
+        "bias_correction_factor": float(BIAS_CORRECTION_FACTOR),
+        "baseline_name": "naive_previous_operational_day",
     }
 
     metrics = {
-        "channel": channel,
+        "channel": canonical_channel,
         "mae": round(mae, 4),
         "rmse": round(rmse, 4),
         "mape": round(mape, 4),
-        "r2": round(r2, 4),
         "wape": round(wape, 4),
         "smape": round(smape, 4),
-        "bias": round(float(bias), 4),
+        "r2": round(r2, 4),
+        "bias": round(bias, 4),
+        "best_val_loss": round(float(best_val_loss), 6),
         "train_size": int(len(X_train)),
         "test_size": int(len(X_test)),
-        "history_epochs": int(len(history.history.get("loss", []))),
+        "time_steps": int(time_steps),
+        "slots_per_day": int(slots_per_day),
+        "model_version": model_version,
+        "baseline_name": "naive_previous_operational_day",
+        "baseline_metrics": baseline_metrics,
     }
 
-    model_path, scaler_path, metadata_path, metrics_path = save_artifacts(
-        channel=channel,
+    save_artifacts(
+        channel=canonical_channel,
         model=model,
-        scaler=scaler,
+        x_scaler=x_scaler,
+        y_scaler=y_scaler,
         metadata=metadata,
         metrics=metrics,
     )
-
-    metrics["model_path"] = str(model_path)
-    metrics["scaler_path"] = str(scaler_path)
-    metrics["metadata_path"] = str(metadata_path)
-    metrics["metrics_path"] = str(metrics_path)
-
-    with open(metrics_path, "w", encoding="utf-8") as f:
-        json.dump(metrics, f, ensure_ascii=False, indent=2)
 
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
 
