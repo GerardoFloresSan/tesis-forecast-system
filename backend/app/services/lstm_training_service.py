@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import subprocess
@@ -8,26 +10,16 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.models.model_train_run import ModelTrainRun
+from app.utils.channel_rules import canonicalize_channel, slugify_channel
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 MODEL_DIR = BASE_DIR / "data" / "models"
 
 
-def _validate_channel(channel: str) -> str:
-    channel = channel.strip()
-
-    if channel != "Choice":
-        raise ValueError(
-            "Por ahora el entrenamiento y reentrenamiento vía API está habilitado para el canal 'Choice'."
-        )
-
-    return channel
-
-
 def _build_paths(channel: str) -> dict:
-    channel = _validate_channel(channel)
-    channel_slug = channel.lower()
+    canonical_channel = canonicalize_channel(channel)
+    channel_slug = slugify_channel(canonical_channel)
 
     return {
         "model_path": MODEL_DIR / f"lstm_{channel_slug}.keras",
@@ -42,7 +34,6 @@ def _resolve_python_executable() -> str:
         venv_python = BASE_DIR / ".venv" / "Scripts" / "python.exe"
         if venv_python.exists():
             return str(venv_python)
-
     return sys.executable
 
 
@@ -73,7 +64,6 @@ def _mark_run_success(db: Session, run: ModelTrainRun, metrics: dict):
     run.metrics_path = metrics["metrics_path"]
     run.error_message = None
     run.finished_at = datetime.utcnow()
-
     db.commit()
     db.refresh(run)
 
@@ -82,16 +72,15 @@ def _mark_run_failed(db: Session, run: ModelTrainRun, error_message: str):
     run.status = "failed"
     run.error_message = error_message
     run.finished_at = datetime.utcnow()
-
     db.commit()
     db.refresh(run)
 
 
 def get_lstm_status(channel: str = "Choice") -> dict:
-    paths = _build_paths(channel)
-
+    canonical_channel = canonicalize_channel(channel)
+    paths = _build_paths(canonical_channel)
     return {
-        "channel": channel,
+        "channel": canonical_channel,
         "model_exists": paths["model_path"].exists(),
         "scaler_exists": paths["scaler_path"].exists(),
         "metadata_exists": paths["metadata_path"].exists(),
@@ -100,19 +89,22 @@ def get_lstm_status(channel: str = "Choice") -> dict:
 
 
 def get_lstm_metrics(channel: str = "Choice") -> dict:
-    paths = _build_paths(channel)
+    canonical_channel = canonicalize_channel(channel)
+    paths = _build_paths(canonical_channel)
 
     if not paths["metrics_path"].exists():
         raise ValueError(
-            f"No existe archivo de métricas para el canal '{channel}'. "
+            f"No existe archivo de métricas para el canal '{canonical_channel}'. "
             "Primero ejecuta /model/train-lstm o corre el script de entrenamiento."
         )
 
     with open(paths["metrics_path"], "r", encoding="utf-8") as f:
         metrics = json.load(f)
 
+    baseline_metrics = metrics.get("baseline_metrics", {}) or {}
+
     return {
-        "channel": metrics["channel"],
+        "channel": metrics.get("channel", canonical_channel),
         "mae": metrics["mae"],
         "rmse": metrics["rmse"],
         "mape": metrics["mape"],
@@ -123,18 +115,35 @@ def get_lstm_metrics(channel: str = "Choice") -> dict:
         "scaler_path": metrics["scaler_path"],
         "metadata_path": metrics["metadata_path"],
         "metrics_path": str(paths["metrics_path"]),
+        "wape": metrics.get("wape"),
+        "smape": metrics.get("smape"),
+        "bias": metrics.get("bias"),
+        "best_val_loss": metrics.get("best_val_loss"),
+        "time_steps": metrics.get("time_steps"),
+        "slots_per_day": metrics.get("slots_per_day"),
+        "model_version": metrics.get("model_version"),
+        "baseline": {
+            "name": metrics.get("baseline_name"),
+            "mae": baseline_metrics.get("mae"),
+            "rmse": baseline_metrics.get("rmse"),
+            "mape": baseline_metrics.get("mape"),
+            "wape": baseline_metrics.get("wape"),
+            "smape": baseline_metrics.get("smape"),
+            "bias": baseline_metrics.get("bias"),
+        },
     }
 
 
 def train_lstm_model(db: Session, channel: str = "Choice", run_type: str = "train") -> dict:
-    channel = _validate_channel(channel)
-    run = _create_run_record(db, channel, run_type)
+    canonical_channel = canonicalize_channel(channel)
+    run = _create_run_record(db, canonical_channel, run_type)
 
     python_executable = _resolve_python_executable()
-    command = [python_executable, "-m", "scripts.train_lstm"]
+    command = [python_executable, "-m", "scripts.train_lstm", "--channel", canonical_channel]
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    env.pop("TF_USE_LEGACY_KERAS", None)
 
     creationflags = 0
     if os.name == "nt":
@@ -159,13 +168,13 @@ def train_lstm_model(db: Session, channel: str = "Choice", run_type: str = "trai
             or "Error desconocido al entrenar LSTM."
         )
         _mark_run_failed(db, run, error_message)
-        raise ValueError(f"Falló el entrenamiento LSTM: {error_message}")
+        raise ValueError(f"Falló el entrenamiento LSTM para '{canonical_channel}': {error_message}")
 
-    metrics = get_lstm_metrics(channel)
+    metrics = get_lstm_metrics(canonical_channel)
     _mark_run_success(db, run, metrics)
 
     return {
-        "message": f"Proceso LSTM '{run_type}' ejecutado correctamente.",
+        "message": f"Proceso LSTM '{run_type}' ejecutado correctamente para el canal '{canonical_channel}'.",
         "run_id": run.id,
         "run_type": run.run_type,
         "status": run.status,
@@ -179,16 +188,10 @@ def retrain_lstm_model(db: Session, channel: str = "Choice") -> dict:
 
 def get_lstm_history(db: Session, channel: str | None = None, limit: int = 50) -> list[dict]:
     query = db.query(ModelTrainRun)
-
     if channel:
-        query = query.filter(ModelTrainRun.channel == channel)
+        query = query.filter(ModelTrainRun.channel == canonicalize_channel(channel))
 
-    rows = (
-        query.order_by(ModelTrainRun.created_at.desc())
-        .limit(limit)
-        .all()
-    )
-
+    rows = query.order_by(ModelTrainRun.created_at.desc()).limit(limit).all()
     return [
         {
             "id": row.id,
@@ -214,23 +217,21 @@ def get_lstm_history(db: Session, channel: str | None = None, limit: int = 50) -
     ]
 
 
-def check_and_retrain_lstm(
-    db: Session,
-    channel: str = "Choice",
-    threshold_mape: float = 15.0,
-) -> dict:
-    channel = _validate_channel(channel)
-    status = get_lstm_status(channel)
+def check_and_retrain_lstm(db: Session, channel: str = "Choice", threshold_mape: float = 15.0) -> dict:
+    canonical_channel = canonicalize_channel(channel)
+    status = get_lstm_status(canonical_channel)
 
-    if not all([
-        status["model_exists"],
-        status["scaler_exists"],
-        status["metadata_exists"],
-        status["metrics_exists"],
-    ]):
-        result = train_lstm_model(db=db, channel=channel, run_type="train")
+    if not all(
+        [
+            status["model_exists"],
+            status["scaler_exists"],
+            status["metadata_exists"],
+            status["metrics_exists"],
+        ]
+    ):
+        result = train_lstm_model(db=db, channel=canonical_channel, run_type="train")
         return {
-            "channel": channel,
+            "channel": canonical_channel,
             "threshold_mape": threshold_mape,
             "current_mape": None,
             "should_retrain": True,
@@ -241,13 +242,13 @@ def check_and_retrain_lstm(
             "status": result["status"],
         }
 
-    metrics = get_lstm_metrics(channel)
+    metrics = get_lstm_metrics(canonical_channel)
     current_mape = metrics["mape"]
 
     if current_mape > threshold_mape:
-        result = retrain_lstm_model(db=db, channel=channel)
+        result = retrain_lstm_model(db=db, channel=canonical_channel)
         return {
-            "channel": channel,
+            "channel": canonical_channel,
             "threshold_mape": threshold_mape,
             "current_mape": current_mape,
             "should_retrain": True,
@@ -262,14 +263,14 @@ def check_and_retrain_lstm(
         }
 
     return {
-        "channel": channel,
+        "channel": canonical_channel,
         "threshold_mape": threshold_mape,
         "current_mape": current_mape,
         "should_retrain": False,
         "action_taken": "none",
         "message": (
             f"El MAPE actual ({current_mape}) no supera el umbral ({threshold_mape}). "
-            "No fue necesario reentrenar."
+            "No se ejecutó reentrenamiento."
         ),
         "run_id": None,
         "run_type": None,

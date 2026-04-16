@@ -7,10 +7,39 @@ from app.models.forecast_run import ForecastRun
 from app.services.lstm_service import predict_next_volume_for_channel
 
 
+def _normalize_variable_type(variable_type: str | None) -> str:
+    value = (variable_type or "").strip().lower()
+
+    alias_map = {
+        "is_holiday": "is_holiday_peru",
+        "holiday": "is_holiday_peru",
+        "holiday_peru": "is_holiday_peru",
+        "is_holiday_peru": "is_holiday_peru",
+        "is_holiday_spain": "is_holiday_spain",
+        "holiday_spain": "is_holiday_spain",
+        "is_holiday_mexico": "is_holiday_mexico",
+        "holiday_mexico": "is_holiday_mexico",
+        "campaign_day": "campaign_day",
+        "absenteeism_rate": "absenteeism_rate",
+    }
+
+    return alias_map.get(value, value)
+
+
+def _default_external_variables() -> dict[str, float]:
+    return {
+        "is_holiday_peru": 0.0,
+        "is_holiday_spain": 0.0,
+        "is_holiday_mexico": 0.0,
+        "campaign_day": 0.0,
+        "absenteeism_rate": 0.0,
+    }
+
+
 def _build_external_variables_map(
     db: Session,
     start_date: date | None = None,
-    end_date: date | None = None
+    end_date: date | None = None,
 ):
     query = db.query(ExternalVariable)
 
@@ -19,24 +48,44 @@ def _build_external_variables_map(
     if end_date:
         query = query.filter(ExternalVariable.variable_date <= end_date)
 
-    records = query.all()
+    records = query.order_by(
+        ExternalVariable.variable_date.asc(),
+        ExternalVariable.id.asc()
+    ).all()
 
     external_map: dict[date, dict[str, float]] = {}
 
     for record in records:
         if record.variable_date not in external_map:
-            external_map[record.variable_date] = {
-                "is_holiday": 0.0,
-                "campaign_day": 0.0,
-                "absenteeism_rate": 0.0,
-            }
+            external_map[record.variable_date] = _default_external_variables()
 
-        variable_type = record.variable_type.strip().lower()
+        normalized_variable = _normalize_variable_type(record.variable_type)
 
-        if variable_type in external_map[record.variable_date]:
-            external_map[record.variable_date][variable_type] = record.variable_value
+        if normalized_variable in external_map[record.variable_date]:
+            external_map[record.variable_date][normalized_variable] = float(record.variable_value or 0.0)
 
     return external_map
+
+
+def _serialize_dataset_row(row, variables: dict[str, float]) -> dict:
+    is_holiday_peru = float(variables.get("is_holiday_peru", 0.0))
+    is_holiday_spain = float(variables.get("is_holiday_spain", 0.0))
+    is_holiday_mexico = float(variables.get("is_holiday_mexico", 0.0))
+
+    return {
+        "interaction_date": row.interaction_date,
+        "interval_time": row.interval_time,
+        "channel": row.channel,
+        "volume": row.volume,
+        "aht": row.aht,
+        "is_holiday": is_holiday_peru,
+        "is_holiday_peru": is_holiday_peru,
+        "is_holiday_spain": is_holiday_spain,
+        "is_holiday_mexico": is_holiday_mexico,
+        "is_holiday_any": float(max(is_holiday_peru, is_holiday_spain, is_holiday_mexico)),
+        "campaign_day": float(variables.get("campaign_day", 0.0)),
+        "absenteeism_rate": float(variables.get("absenteeism_rate", 0.0)),
+    }
 
 
 def get_available_channels(db: Session) -> list[str]:
@@ -50,86 +99,75 @@ def get_available_channels(db: Session) -> list[str]:
     return [row[0] for row in rows if row[0]]
 
 
-def get_forecast_dataset(db: Session):
-    historical_data = (
-        db.query(HistoricalInteraction)
-        .order_by(
-            HistoricalInteraction.interaction_date.asc(),
-            HistoricalInteraction.interval_time.asc(),
-            HistoricalInteraction.channel.asc(),
-        )
-        .all()
+def get_forecast_dataset(
+    db: Session,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    channel: str | None = None,
+    limit: int | None = 500,
+    offset: int = 0,
+):
+    query = db.query(HistoricalInteraction)
+
+    if start_date:
+        query = query.filter(HistoricalInteraction.interaction_date >= start_date)
+
+    if end_date:
+        query = query.filter(HistoricalInteraction.interaction_date <= end_date)
+
+    if channel:
+        query = query.filter(HistoricalInteraction.channel == channel)
+
+    query = query.order_by(
+        HistoricalInteraction.interaction_date.asc(),
+        HistoricalInteraction.interval_time.asc(),
+        HistoricalInteraction.channel.asc(),
     )
 
-    external_map = _build_external_variables_map(db)
+    if offset:
+        query = query.offset(offset)
+
+    if limit is not None:
+        query = query.limit(limit)
+
+    historical_rows = query.all()
+
+    if not historical_rows:
+        return []
+
+    effective_start_date = start_date or min(row.interaction_date for row in historical_rows)
+    effective_end_date = end_date or max(row.interaction_date for row in historical_rows)
+
+    external_map = _build_external_variables_map(
+        db=db,
+        start_date=effective_start_date,
+        end_date=effective_end_date,
+    )
 
     dataset = []
-    for row in historical_data:
-        variables = external_map.get(
-            row.interaction_date,
-            {
-                "is_holiday": 0.0,
-                "campaign_day": 0.0,
-                "absenteeism_rate": 0.0,
-            },
-        )
-
-        dataset.append(
-            {
-                "interaction_date": row.interaction_date,
-                "interval_time": row.interval_time,
-                "channel": row.channel,
-                "volume": row.volume,
-                "aht": row.aht,
-                "is_holiday": variables["is_holiday"],
-                "campaign_day": variables["campaign_day"],
-                "absenteeism_rate": variables["absenteeism_rate"],
-            }
-        )
+    for row in historical_rows:
+        variables = external_map.get(row.interaction_date, _default_external_variables())
+        dataset.append(_serialize_dataset_row(row, variables))
 
     return dataset
 
 
-def get_forecast_dataset_by_date(db: Session, start_date: date, end_date: date):
-    historical_data = (
-        db.query(HistoricalInteraction)
-        .filter(HistoricalInteraction.interaction_date >= start_date)
-        .filter(HistoricalInteraction.interaction_date <= end_date)
-        .order_by(
-            HistoricalInteraction.interaction_date.asc(),
-            HistoricalInteraction.interval_time.asc(),
-            HistoricalInteraction.channel.asc(),
-        )
-        .all()
+def get_forecast_dataset_by_date(
+    db: Session,
+    start_date: date,
+    end_date: date,
+    channel: str | None = None,
+    limit: int | None = 1000,
+    offset: int = 0,
+):
+    return get_forecast_dataset(
+        db=db,
+        start_date=start_date,
+        end_date=end_date,
+        channel=channel,
+        limit=limit,
+        offset=offset,
     )
-
-    external_map = _build_external_variables_map(db, start_date, end_date)
-
-    dataset = []
-    for row in historical_data:
-        variables = external_map.get(
-            row.interaction_date,
-            {
-                "is_holiday": 0.0,
-                "campaign_day": 0.0,
-                "absenteeism_rate": 0.0,
-            },
-        )
-
-        dataset.append(
-            {
-                "interaction_date": row.interaction_date,
-                "interval_time": row.interval_time,
-                "channel": row.channel,
-                "volume": row.volume,
-                "aht": row.aht,
-                "is_holiday": variables["is_holiday"],
-                "campaign_day": variables["campaign_day"],
-                "absenteeism_rate": variables["absenteeism_rate"],
-            }
-        )
-
-    return dataset
 
 
 def create_daily_forecast(db: Session, channel: str):

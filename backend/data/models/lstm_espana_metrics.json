@@ -1,0 +1,29 @@
+{
+  "channel": "España",
+  "mae": 10.8551,
+  "rmse": 13.9261,
+  "mape": 14.7236,
+  "wape": 12.6213,
+  "smape": 13.8907,
+  "r2": 0.7831,
+  "bias": -0.483,
+  "best_val_loss": 0.063438,
+  "train_size": 6592,
+  "test_size": 2035,
+  "time_steps": 34,
+  "slots_per_day": 34,
+  "model_version": "lstm_espana_v2_operational",
+  "baseline_name": "naive_previous_operational_day",
+  "baseline_metrics": {
+    "mae": 21.9892,
+    "rmse": 27.071,
+    "mape": 30.456,
+    "wape": 25.5668,
+    "smape": 28.6413,
+    "bias": 0.0934
+  },
+  "model_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_espana.keras",
+  "scaler_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_espana_scaler.joblib",
+  "metadata_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_espana_metadata.joblib",
+  "metrics_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_espana_metrics.json"
+}

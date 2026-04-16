@@ -38,6 +38,8 @@ from app.services.system_summary_service import get_system_summary
 
 router = APIRouter(prefix="/model", tags=["Model"])
 
+CHANNEL_DESCRIPTION = "Canal para LSTM. Permitidos: Choice o España. También acepta 'espana'."
+
 
 @router.get("/train-baseline", response_model=ModelMetricsResponse)
 def train_baseline(db: Session = Depends(get_db)):
@@ -76,7 +78,7 @@ def predict_baseline_saved(data: BaselinePredictionRequest):
 
 @router.post("/train-lstm", response_model=LstmTrainResponse)
 def train_lstm(
-    channel: str = Query(default="Choice", description="Por ahora usar Choice"),
+    channel: str = Query(default="Choice", description=CHANNEL_DESCRIPTION),
     db: Session = Depends(get_db),
 ):
     try:
@@ -87,7 +89,7 @@ def train_lstm(
 
 @router.post("/retrain-lstm", response_model=LstmTrainResponse)
 def retrain_lstm(
-    channel: str = Query(default="Choice", description="Por ahora usar Choice"),
+    channel: str = Query(default="Choice", description=CHANNEL_DESCRIPTION),
     db: Session = Depends(get_db),
 ):
     try:
@@ -98,7 +100,7 @@ def retrain_lstm(
 
 @router.post("/check-and-retrain-lstm", response_model=LstmCheckRetrainResponse)
 def check_and_retrain(
-    channel: str = Query(default="Choice", description="Por ahora usar Choice"),
+    channel: str = Query(default="Choice", description=CHANNEL_DESCRIPTION),
     threshold_mape: float = Query(default=15.0, ge=0.0, le=1000.0),
     db: Session = Depends(get_db),
 ):
@@ -114,7 +116,7 @@ def check_and_retrain(
 
 @router.get("/lstm-metrics", response_model=LstmMetricsResponse)
 def lstm_metrics(
-    channel: str = Query(default="Choice", description="Por ahora usar Choice")
+    channel: str = Query(default="Choice", description=CHANNEL_DESCRIPTION)
 ):
     try:
         return get_lstm_metrics(channel)
@@ -124,7 +126,7 @@ def lstm_metrics(
 
 @router.get("/lstm-status", response_model=LstmStatusResponse)
 def lstm_status(
-    channel: str = Query(default="Choice", description="Por ahora usar Choice")
+    channel: str = Query(default="Choice", description=CHANNEL_DESCRIPTION)
 ):
     try:
         return get_lstm_status(channel)
@@ -134,7 +136,7 @@ def lstm_status(
 
 @router.get("/lstm-history", response_model=list[LstmHistoryResponse])
 def lstm_history(
-    channel: str | None = Query(default=None),
+    channel: str | None = Query(default=None, description="Filtra historial por canal. Permitidos: Choice o España."),
     limit: int = Query(default=50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
@@ -162,7 +164,7 @@ def scheduler_job_history(limit: int = Query(default=50, ge=1, le=500)):
 
 @router.get("/system-summary", response_model=SystemSummaryResponse)
 def system_summary(
-    channel: str = Query(default="Choice", description="Canal principal a resumir"),
+    channel: str = Query(default="Choice", description="Canal principal a resumir. Permitidos: Choice o España."),
     db: Session = Depends(get_db),
 ):
     try:

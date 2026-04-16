@@ -28,17 +28,47 @@ def forecast_channels(db: Session = Depends(get_db)):
 
 
 @router.get("/dataset", response_model=list[ForecastDatasetRow])
-def forecast_dataset(db: Session = Depends(get_db)):
-    return get_forecast_dataset(db)
+def forecast_dataset(
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    channel: str | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    try:
+        return get_forecast_dataset(
+            db=db,
+            start_date=start_date,
+            end_date=end_date,
+            channel=channel,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/dataset/by-date", response_model=list[ForecastDatasetRow])
 def forecast_dataset_by_date(
     start_date: date = Query(...),
     end_date: date = Query(...),
+    channel: str | None = Query(default=None),
+    limit: int = Query(default=1000, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ):
-    return get_forecast_dataset_by_date(db, start_date, end_date)
+    try:
+        return get_forecast_dataset_by_date(
+            db=db,
+            start_date=start_date,
+            end_date=end_date,
+            channel=channel,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/daily", response_model=ForecastRunResponse)
