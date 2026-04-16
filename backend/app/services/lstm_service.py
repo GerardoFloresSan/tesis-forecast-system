@@ -1,253 +1,203 @@
+from __future__ import annotations
+
 from datetime import timedelta
 from pathlib import Path
 import re
+import unicodedata
 
 import joblib
 import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
-from tensorflow.keras.models import load_model
 
 from app.models.external_variable import ExternalVariable
 from app.models.historical_interaction import HistoricalInteraction
-from app.utils.external_variables import (
-    build_default_external_variables,
-    build_external_variables_map_from_records,
-    enrich_external_variables,
-)
+
+
+def _get_load_model():
+    import os
+
+    os.environ.pop("TF_USE_LEGACY_KERAS", None)
+
+    try:
+        from tensorflow.keras.models import load_model
+        return load_model
+    except Exception as exc:
+        raise ModuleNotFoundError(
+            "No se pudo importar tensorflow.keras.models.load_model. "
+            "Verifica la instalación de TensorFlow en el entorno virtual."
+        ) from exc
+
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 MODEL_DIR = BASE_DIR / "data" / "models"
-
+ALLOWED_CHANNELS = {
+    "choice": "Choice",
+    "espana": "España",
+}
 CHANNEL_BUSINESS_HOURS = {
     "choice": {"start_minute": 0, "end_minute": 990},
-    "españa": {"start_minute": 0, "end_minute": 990},
-}
-
-CHANNEL_SHIFTS = {
-    "choice": {
-        "morning": (0, 12),
-        "afternoon": (12, 16),
-        "night": None,
-    },
-    "españa": {
-        "morning": (0, 12),
-        "afternoon": (12, 16),
-        "night": None,
-    },
+    "espana": {"start_minute": 0, "end_minute": 990},
 }
 
 
+def _normalize_channel_key(channel: str) -> str:
+    normalized = unicodedata.normalize("NFKD", (channel or "").strip())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = normalized.lower()
+    normalized = " ".join(normalized.split())
+    return normalized
 
-def apply_business_hours_filter(df: pd.DataFrame, channel: str) -> pd.DataFrame:
-    channel_key = channel.strip().lower()
-    hours = CHANNEL_BUSINESS_HOURS.get(channel_key)
-    if hours is None:
-        return df
-    df = df.copy()
-    df["minute_of_day"] = df["datetime"].dt.hour * 60 + df["datetime"].dt.minute
-    mask = (df["minute_of_day"] >= hours["start_minute"]) & (df["minute_of_day"] <= hours["end_minute"])
-    filtered = df[mask].drop(columns=["minute_of_day"]).reset_index(drop=True)
-    if filtered.empty:
+
+def canonicalize_channel(channel: str) -> str:
+    channel_key = _normalize_channel_key(channel)
+    canonical = ALLOWED_CHANNELS.get(channel_key)
+    if canonical is None:
         raise ValueError(
-            f"El dataset del canal '{channel}' quedó vacío tras aplicar el filtro de horario operativo."
+            f"Canal '{channel}' no soportado para LSTM. "
+            f"Permitidos: {', '.join(ALLOWED_CHANNELS.values())}."
         )
-    return filtered
-
+    return canonical
 
 
 def slugify_channel(channel: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", channel.strip().lower()).strip("_")
+    normalized = unicodedata.normalize("NFKD", channel.strip())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = normalized.lower()
+    return re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
 
+
+def apply_business_hours_filter(df: pd.DataFrame, channel: str) -> pd.DataFrame:
+    channel_key = _normalize_channel_key(channel)
+    hours = CHANNEL_BUSINESS_HOURS.get(channel_key)
+    if hours is None:
+        return df
+
+    df = df.copy()
+    df["minute_of_day"] = df["datetime"].dt.hour * 60 + df["datetime"].dt.minute
+    mask = (
+        (df["minute_of_day"] >= hours["start_minute"])
+        & (df["minute_of_day"] <= hours["end_minute"])
+    )
+    filtered = df[mask].drop(columns=["minute_of_day"]).reset_index(drop=True)
+
+    if filtered.empty:
+        raise ValueError(
+            f"El dataset del canal '{channel}' quedó vacío tras aplicar "
+            f"el filtro de horario operativo."
+        )
+
+    return filtered
 
 
 def load_lstm_artifacts(channel: str):
-    channel_slug = slugify_channel(channel)
+    canonical_channel = canonicalize_channel(channel)
+    channel_slug = slugify_channel(canonical_channel)
 
     model_path = MODEL_DIR / f"lstm_{channel_slug}.keras"
     scaler_path = MODEL_DIR / f"lstm_{channel_slug}_scaler.joblib"
     metadata_path = MODEL_DIR / f"lstm_{channel_slug}_metadata.joblib"
 
     if not model_path.exists():
-        raise ValueError(f"No existe el modelo LSTM para el canal '{channel}' en: {model_path}")
-
+        raise ValueError(f"No existe el modelo LSTM para el canal '{canonical_channel}' en: {model_path}")
     if not scaler_path.exists():
-        raise ValueError(f"No existe el scaler para el canal '{channel}' en: {scaler_path}")
-
+        raise ValueError(f"No existe el scaler LSTM para el canal '{canonical_channel}' en: {scaler_path}")
     if not metadata_path.exists():
-        raise ValueError(f"No existe el metadata para el canal '{channel}' en: {metadata_path}")
+        raise ValueError(f"No existe el metadata LSTM para el canal '{canonical_channel}' en: {metadata_path}")
 
-    model = load_model(model_path, compile=False)
-    scaler_artifact = joblib.load(scaler_path)
+    load_model = _get_load_model()
+    model = load_model(model_path)
+    scaler = joblib.load(scaler_path)
     metadata = joblib.load(metadata_path)
 
-    if isinstance(scaler_artifact, dict) and "x_scaler" in scaler_artifact and "y_scaler" in scaler_artifact:
-        x_scaler = scaler_artifact["x_scaler"]
-        y_scaler = scaler_artifact["y_scaler"]
-    else:
-        x_scaler = scaler_artifact
-        y_scaler = scaler_artifact
-
-    return model, x_scaler, y_scaler, metadata
+    return model, scaler, metadata
 
 
+def _get_external_variables_map(db: Session) -> dict:
+    variables = db.query(ExternalVariable).all()
+    mapping: dict = {}
 
-def _build_external_variables_map(db: Session):
-    records = (
-        db.query(ExternalVariable)
-        .order_by(ExternalVariable.variable_date.asc(), ExternalVariable.id.asc())
-        .all()
-    )
-    return build_external_variables_map_from_records(records)
+    for item in variables:
+        day_map = mapping.setdefault(item.variable_date, {})
+        day_map[str(item.variable_type).strip().lower()] = float(item.variable_value or 0.0)
+
+    return mapping
 
 
+def _build_feature_row(row, external_map: dict) -> dict:
+    day_vars = external_map.get(row.interaction_date, {})
 
-def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
+    is_holiday_peru = float(day_vars.get("is_holiday_peru", day_vars.get("is_holiday", 0.0)))
+    is_holiday_spain = float(day_vars.get("is_holiday_spain", 0.0))
+    is_holiday_mexico = float(day_vars.get("is_holiday_mexico", 0.0))
+    campaign_day = float(day_vars.get("campaign_day", 0.0))
+    absenteeism_rate = float(day_vars.get("absenteeism_rate", 0.0))
+
+    return {
+        "datetime": pd.to_datetime(f"{row.interaction_date} {row.interval_time}"),
+        "volume": float(row.volume or 0.0),
+        "aht": float(row.aht or 0.0),
+        "day_of_week": pd.to_datetime(row.interaction_date).dayofweek,
+        "month": pd.to_datetime(row.interaction_date).month,
+        "is_holiday_peru": is_holiday_peru,
+        "is_holiday_spain": is_holiday_spain,
+        "is_holiday_mexico": is_holiday_mexico,
+        "is_holiday_any": float(max(is_holiday_peru, is_holiday_spain, is_holiday_mexico)),
+        "campaign_day": campaign_day,
+        "absenteeism_rate": absenteeism_rate,
+    }
+
+
+def _prepare_recent_sequence(df: pd.DataFrame, metadata: dict) -> np.ndarray:
+    feature_columns = metadata["feature_columns"]
+    time_steps = int(metadata["time_steps"])
+
+    if len(df) < time_steps:
+        raise ValueError(
+            f"No hay suficientes registros para inferencia LSTM. "
+            f"Se requieren al menos {time_steps} y solo hay {len(df)}."
+        )
+
+    sequence = df[feature_columns].tail(time_steps).values
+    return np.array([sequence], dtype=np.float32)
+
+
+def predict_next_volume_for_channel(db: Session, channel: str) -> dict:
+    canonical_channel = canonicalize_channel(channel)
+    model, scaler, metadata = load_lstm_artifacts(canonical_channel)
+
     rows = (
         db.query(HistoricalInteraction)
-        .filter(HistoricalInteraction.channel == channel)
-        .order_by(HistoricalInteraction.interaction_date.asc(), HistoricalInteraction.interval_time.asc())
+        .filter(HistoricalInteraction.channel == canonical_channel)
+        .order_by(
+            HistoricalInteraction.interaction_date.asc(),
+            HistoricalInteraction.interval_time.asc(),
+        )
         .all()
     )
 
     if not rows:
-        raise ValueError(f"No hay datos históricos para el canal '{channel}'.")
+        raise ValueError(f"No hay datos históricos para el canal '{canonical_channel}'.")
 
-    external_map = _build_external_variables_map(db)
-
-    dataset = []
-    for row in rows:
-        variables = enrich_external_variables(
-            external_map.get(row.interaction_date, build_default_external_variables())
-        )
-
-        dataset.append(
-            {
-                "interaction_date": row.interaction_date,
-                "interval_time": row.interval_time,
-                "channel": row.channel,
-                "volume": row.volume,
-                "aht": row.aht if row.aht is not None else 0.0,
-                "is_holiday": variables["is_holiday"],
-                "is_holiday_peru": variables["is_holiday_peru"],
-                "is_holiday_spain": variables["is_holiday_spain"],
-                "is_holiday_mexico": variables["is_holiday_mexico"],
-                "is_holiday_any": variables["is_holiday_any"],
-                "campaign_day": variables["campaign_day"],
-                "absenteeism_rate": variables["absenteeism_rate"],
-            }
-        )
-
-    df = pd.DataFrame(dataset)
-
-    df["datetime"] = pd.to_datetime(df["interaction_date"].astype(str) + " " + df["interval_time"].astype(str))
-    df = df.sort_values("datetime").reset_index(drop=True)
-
-    numeric_columns = [
-        "volume",
-        "aht",
-        "is_holiday",
-        "is_holiday_peru",
-        "is_holiday_spain",
-        "is_holiday_mexico",
-        "is_holiday_any",
-        "campaign_day",
-        "absenteeism_rate",
-    ]
-    for column in numeric_columns:
-        df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0.0)
-
-    df = apply_business_hours_filter(df, channel)
-
-    df["day_of_week"] = df["datetime"].dt.weekday
-    df["month"] = df["datetime"].dt.month
-    df["day"] = df["datetime"].dt.day
-    df["hour"] = df["datetime"].dt.hour
-    df["minute"] = df["datetime"].dt.minute
-    df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
-    df["minute_of_day"] = df["hour"] * 60 + df["minute"]
-
-    df["dow_sin"] = np.sin(2 * np.pi * df["day_of_week"] / 7)
-    df["dow_cos"] = np.cos(2 * np.pi * df["day_of_week"] / 7)
-    df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12)
-    df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12)
-    df["minute_sin"] = np.sin(2 * np.pi * df["minute_of_day"] / 1440)
-    df["minute_cos"] = np.cos(2 * np.pi * df["minute_of_day"] / 1440)
-
-    shifts = CHANNEL_SHIFTS.get(channel.strip().lower(), {"morning": (6, 13), "afternoon": (14, 21), "night": None})
-    df["is_morning_shift"] = df["hour"].between(*shifts["morning"]).astype(int)
-    df["is_afternoon_shift"] = df["hour"].between(*shifts["afternoon"]).astype(int)
-    df["is_night_shift"] = 0
-
-    df["lag_volume_1"] = df["volume"].shift(1)
-    df["lag_volume_2"] = df["volume"].shift(2)
-    df["lag_volume_33"] = df["volume"].shift(33)
-    df["lag_volume_231"] = df["volume"].shift(231)
-
-    df["rolling_mean_3"] = df["volume"].shift(1).rolling(window=3).mean()
-    df["rolling_mean_6"] = df["volume"].shift(1).rolling(window=6).mean()
-    df["rolling_mean_33"] = df["volume"].shift(1).rolling(window=33).mean()
-
-    df["lag_aht_1"] = df["aht"].shift(1)
-
-    df = df.dropna().reset_index(drop=True)
-
-    if df.empty:
-        raise ValueError(
-            f"El dataset del canal '{channel}' quedó vacío después de generar lags/rolling."
-        )
-
-    return df
-
-
-
-def _infer_next_datetime(df: pd.DataFrame):
-    last_dt = df["datetime"].iloc[-1].to_pydatetime()
-
-    if len(df) >= 2:
-        previous_dt = df["datetime"].iloc[-2].to_pydatetime()
-        delta = last_dt - previous_dt
-
-        if delta.total_seconds() <= 0:
-            delta = timedelta(minutes=30)
-    else:
-        delta = timedelta(minutes=30)
-
-    return last_dt + delta
-
-
-
-def predict_next_volume_for_channel(db: Session, channel: str) -> dict:
-    model, x_scaler, y_scaler, metadata = load_lstm_artifacts(channel)
-    df = _build_channel_dataframe(db, channel)
+    external_map = _get_external_variables_map(db)
+    feature_rows = [_build_feature_row(row, external_map) for row in rows]
+    df = pd.DataFrame(feature_rows)
+    df = apply_business_hours_filter(df, canonical_channel)
 
     feature_columns = metadata["feature_columns"]
-    time_steps = metadata["time_steps"]
+    df[feature_columns] = scaler.transform(df[feature_columns])
 
-    if len(df) < time_steps:
-        raise ValueError(
-            f"No hay suficientes datos para predecir. Se necesitan al menos {time_steps} filas y solo hay {len(df)}."
-        )
+    X_input = _prepare_recent_sequence(df, metadata)
+    prediction = model.predict(X_input, verbose=0)
 
-    for col in feature_columns:
-        if col not in df.columns:
-            df[col] = 0.0
+    predicted_value = float(np.maximum(prediction[0][0], 0.0))
 
-    dataset = df[feature_columns].copy()
-    scaled_data = x_scaler.transform(dataset)
-
-    last_window = scaled_data[-time_steps:]
-    X_input = np.array([last_window])
-
-    prediction_scaled = model.predict(X_input, verbose=0)
-    prediction = y_scaler.inverse_transform(prediction_scaled).flatten()[0]
-    prediction = max(float(prediction), 0.0)
-
-    next_forecast_datetime = _infer_next_datetime(df)
+    last_datetime = df["datetime"].max()
+    next_datetime = last_datetime + timedelta(minutes=30)
 
     return {
-        "channel": channel,
-        "forecast_date": next_forecast_datetime,
-        "predicted_value": round(prediction, 4),
-        "model_version": metadata.get("model_version", f"lstm_{slugify_channel(channel)}"),
+        "channel": canonical_channel,
+        "forecast_date": next_datetime.date(),
+        "predicted_value": predicted_value,
+        "model_version": "lstm_v1",
     }

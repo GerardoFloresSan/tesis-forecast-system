@@ -1,0 +1,17 @@
+{
+  "channel": "España",
+  "mae": 15.2312,
+  "rmse": 20.4596,
+  "mape": 23.9972,
+  "r2": 0.5276,
+  "wape": 17.6863,
+  "smape": 19.1832,
+  "bias": 3.9159,
+  "train_size": 8439,
+  "test_size": 2110,
+  "history_epochs": 72,
+  "model_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_espana.keras",
+  "scaler_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_espana_scaler.joblib",
+  "metadata_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_espana_metadata.joblib",
+  "metrics_path": "C:\\Users\\Gerardo\\Desktop\\tesis-forecast-system\\backend\\data\\models\\lstm_espana_metrics.json"
+}
