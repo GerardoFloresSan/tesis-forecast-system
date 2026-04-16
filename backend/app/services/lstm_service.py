@@ -8,30 +8,35 @@ import pandas as pd
 from sqlalchemy.orm import Session
 from tensorflow.keras.models import load_model
 
-from app.models.historical_interaction import HistoricalInteraction
 from app.models.external_variable import ExternalVariable
-
+from app.models.historical_interaction import HistoricalInteraction
+from app.utils.external_variables import (
+    build_default_external_variables,
+    build_external_variables_map_from_records,
+    enrich_external_variables,
+)
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 MODEL_DIR = BASE_DIR / "data" / "models"
 
 CHANNEL_BUSINESS_HOURS = {
-    "choice": {"start_minute": 0, "end_minute": 990},   # 00:00 – 16:30
-    "españa": {"start_minute": 0, "end_minute": 990},   # 00:00 – 16:30
+    "choice": {"start_minute": 0, "end_minute": 990},
+    "españa": {"start_minute": 0, "end_minute": 990},
 }
 
 CHANNEL_SHIFTS = {
     "choice": {
-        "morning":   (0, 12),    # 00:00 – 12:00
-        "afternoon": (12, 16),   # 12:00 – 16:30
-        "night":     None,       # No existe
+        "morning": (0, 12),
+        "afternoon": (12, 16),
+        "night": None,
     },
     "españa": {
-        "morning":   (0, 12),
+        "morning": (0, 12),
         "afternoon": (12, 16),
-        "night":     None,
+        "night": None,
     },
 }
+
 
 
 def apply_business_hours_filter(df: pd.DataFrame, channel: str) -> pd.DataFrame:
@@ -41,21 +46,19 @@ def apply_business_hours_filter(df: pd.DataFrame, channel: str) -> pd.DataFrame:
         return df
     df = df.copy()
     df["minute_of_day"] = df["datetime"].dt.hour * 60 + df["datetime"].dt.minute
-    mask = (
-        (df["minute_of_day"] >= hours["start_minute"]) &
-        (df["minute_of_day"] <= hours["end_minute"])
-    )
+    mask = (df["minute_of_day"] >= hours["start_minute"]) & (df["minute_of_day"] <= hours["end_minute"])
     filtered = df[mask].drop(columns=["minute_of_day"]).reset_index(drop=True)
     if filtered.empty:
         raise ValueError(
-            f"El dataset del canal '{channel}' quedó vacío tras aplicar "
-            f"el filtro de horario operativo."
+            f"El dataset del canal '{channel}' quedó vacío tras aplicar el filtro de horario operativo."
         )
     return filtered
 
 
+
 def slugify_channel(channel: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", channel.strip().lower()).strip("_")
+
 
 
 def load_lstm_artifacts(channel: str):
@@ -88,43 +91,22 @@ def load_lstm_artifacts(channel: str):
     return model, x_scaler, y_scaler, metadata
 
 
+
 def _build_external_variables_map(db: Session):
-    records = db.query(ExternalVariable).all()
+    records = (
+        db.query(ExternalVariable)
+        .order_by(ExternalVariable.variable_date.asc(), ExternalVariable.id.asc())
+        .all()
+    )
+    return build_external_variables_map_from_records(records)
 
-    _DEFAULT_EXT = {
-        "is_holiday_peru": 0.0,
-        "is_holiday_spain": 0.0,
-        "is_holiday_mexico": 0.0,
-        "campaign_day": 0.0,
-        "absenteeism_rate": 0.0,
-    }
-
-    external_map = {}
-
-    for record in records:
-        if record.variable_date not in external_map:
-            external_map[record.variable_date] = dict(_DEFAULT_EXT)
-
-        variable_type = record.variable_type.strip().lower()
-
-        # Mapear "is_holiday" genérico a "is_holiday_peru"
-        if variable_type == "is_holiday":
-            variable_type = "is_holiday_peru"
-
-        if variable_type in external_map[record.variable_date]:
-            external_map[record.variable_date][variable_type] = record.variable_value
-
-    return external_map
 
 
 def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
     rows = (
         db.query(HistoricalInteraction)
         .filter(HistoricalInteraction.channel == channel)
-        .order_by(
-            HistoricalInteraction.interaction_date.asc(),
-            HistoricalInteraction.interval_time.asc(),
-        )
+        .order_by(HistoricalInteraction.interaction_date.asc(), HistoricalInteraction.interval_time.asc())
         .all()
     )
 
@@ -135,14 +117,9 @@ def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
 
     dataset = []
     for row in rows:
-        _default_vars = {
-            "is_holiday_peru": 0.0,
-            "is_holiday_spain": 0.0,
-            "is_holiday_mexico": 0.0,
-            "campaign_day": 0.0,
-            "absenteeism_rate": 0.0,
-        }
-        variables = {**_default_vars, **external_map.get(row.interaction_date, {})}
+        variables = enrich_external_variables(
+            external_map.get(row.interaction_date, build_default_external_variables())
+        )
 
         dataset.append(
             {
@@ -151,9 +128,11 @@ def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
                 "channel": row.channel,
                 "volume": row.volume,
                 "aht": row.aht if row.aht is not None else 0.0,
+                "is_holiday": variables["is_holiday"],
                 "is_holiday_peru": variables["is_holiday_peru"],
                 "is_holiday_spain": variables["is_holiday_spain"],
                 "is_holiday_mexico": variables["is_holiday_mexico"],
+                "is_holiday_any": variables["is_holiday_any"],
                 "campaign_day": variables["campaign_day"],
                 "absenteeism_rate": variables["absenteeism_rate"],
             }
@@ -161,24 +140,25 @@ def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
 
     df = pd.DataFrame(dataset)
 
-    df["datetime"] = pd.to_datetime(
-        df["interaction_date"].astype(str) + " " + df["interval_time"].astype(str)
-    )
-
+    df["datetime"] = pd.to_datetime(df["interaction_date"].astype(str) + " " + df["interval_time"].astype(str))
     df = df.sort_values("datetime").reset_index(drop=True)
 
-    df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
-    df["aht"] = pd.to_numeric(df["aht"], errors="coerce").fillna(0.0)
-    df["is_holiday_peru"] = pd.to_numeric(df["is_holiday_peru"], errors="coerce").fillna(0.0)
-    df["is_holiday_spain"] = pd.to_numeric(df["is_holiday_spain"], errors="coerce").fillna(0.0)
-    df["is_holiday_mexico"] = pd.to_numeric(df["is_holiday_mexico"], errors="coerce").fillna(0.0)
-    df["campaign_day"] = pd.to_numeric(df["campaign_day"], errors="coerce").fillna(0.0)
-    df["absenteeism_rate"] = pd.to_numeric(df["absenteeism_rate"], errors="coerce").fillna(0.0)
+    numeric_columns = [
+        "volume",
+        "aht",
+        "is_holiday",
+        "is_holiday_peru",
+        "is_holiday_spain",
+        "is_holiday_mexico",
+        "is_holiday_any",
+        "campaign_day",
+        "absenteeism_rate",
+    ]
+    for column in numeric_columns:
+        df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0.0)
 
-    # Filtrar horario operativo ANTES de generar features/lags
     df = apply_business_hours_filter(df, channel)
 
-    # Variables temporales
     df["day_of_week"] = df["datetime"].dt.weekday
     df["month"] = df["datetime"].dt.month
     df["day"] = df["datetime"].dt.day
@@ -187,31 +167,23 @@ def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
     df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
     df["minute_of_day"] = df["hour"] * 60 + df["minute"]
 
-    # Codificación cíclica
     df["dow_sin"] = np.sin(2 * np.pi * df["day_of_week"] / 7)
     df["dow_cos"] = np.cos(2 * np.pi * df["day_of_week"] / 7)
-
     df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12)
     df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12)
-
     df["minute_sin"] = np.sin(2 * np.pi * df["minute_of_day"] / 1440)
     df["minute_cos"] = np.cos(2 * np.pi * df["minute_of_day"] / 1440)
 
-    # Turnos dinámicos por canal
-    shifts = CHANNEL_SHIFTS.get(channel.strip().lower(), {
-        "morning": (6, 13), "afternoon": (14, 21), "night": None
-    })
-    df["is_morning_shift"]   = df["hour"].between(*shifts["morning"]).astype(int)
+    shifts = CHANNEL_SHIFTS.get(channel.strip().lower(), {"morning": (6, 13), "afternoon": (14, 21), "night": None})
+    df["is_morning_shift"] = df["hour"].between(*shifts["morning"]).astype(int)
     df["is_afternoon_shift"] = df["hour"].between(*shifts["afternoon"]).astype(int)
-    df["is_night_shift"]     = 0   # Choice/España no tienen turno noche
+    df["is_night_shift"] = 0
 
-    # 33 slots/día (Choice/España 00:00–16:30)
     df["lag_volume_1"] = df["volume"].shift(1)
     df["lag_volume_2"] = df["volume"].shift(2)
     df["lag_volume_33"] = df["volume"].shift(33)
     df["lag_volume_231"] = df["volume"].shift(231)
 
-    # Rolling con solo pasado
     df["rolling_mean_3"] = df["volume"].shift(1).rolling(window=3).mean()
     df["rolling_mean_6"] = df["volume"].shift(1).rolling(window=6).mean()
     df["rolling_mean_33"] = df["volume"].shift(1).rolling(window=33).mean()
@@ -226,6 +198,7 @@ def _build_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
         )
 
     return df
+
 
 
 def _infer_next_datetime(df: pd.DataFrame):
@@ -243,6 +216,7 @@ def _infer_next_datetime(df: pd.DataFrame):
     return last_dt + delta
 
 
+
 def predict_next_volume_for_channel(db: Session, channel: str) -> dict:
     model, x_scaler, y_scaler, metadata = load_lstm_artifacts(channel)
     df = _build_channel_dataframe(db, channel)
@@ -252,8 +226,7 @@ def predict_next_volume_for_channel(db: Session, channel: str) -> dict:
 
     if len(df) < time_steps:
         raise ValueError(
-            f"No hay suficientes datos para predecir. "
-            f"Se necesitan al menos {time_steps} filas y solo hay {len(df)}."
+            f"No hay suficientes datos para predecir. Se necesitan al menos {time_steps} filas y solo hay {len(df)}."
         )
 
     for col in feature_columns:
@@ -268,7 +241,6 @@ def predict_next_volume_for_channel(db: Session, channel: str) -> dict:
 
     prediction_scaled = model.predict(X_input, verbose=0)
     prediction = y_scaler.inverse_transform(prediction_scaled).flatten()[0]
-
     prediction = max(float(prediction), 0.0)
 
     next_forecast_datetime = _infer_next_datetime(df)

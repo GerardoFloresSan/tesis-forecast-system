@@ -1,5 +1,6 @@
+from datetime import date, datetime, time
+
 from pydantic import BaseModel
-from datetime import date, time, datetime
 
 
 class ModelMetricsResponse(BaseModel):
@@ -18,6 +19,9 @@ class BaselinePredictionRequest(BaseModel):
     channel: str
     aht: float = 0.0
     is_holiday: float = 0.0
+    is_holiday_peru: float | None = None
+    is_holiday_spain: float = 0.0
+    is_holiday_mexico: float = 0.0
     campaign_day: float = 0.0
     absenteeism_rate: float = 0.0
 
