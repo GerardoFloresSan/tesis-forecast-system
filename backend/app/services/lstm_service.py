@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 import joblib
@@ -13,7 +13,6 @@ from app.models.historical_interaction import HistoricalInteraction
 from app.utils.channel_rules import (
     apply_business_hours_filter,
     canonicalize_channel,
-    get_next_operational_datetime,
     get_next_operational_day_date,
     get_operational_day_datetimes,
     get_operational_day_start_datetime,
@@ -22,9 +21,109 @@ from app.utils.channel_rules import (
     slugify_channel,
 )
 
-
 BASE_DIR = Path(__file__).resolve().parents[2]
 MODEL_DIR = BASE_DIR / "data" / "models"
+
+
+def _safe_float(value: float | int | None, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _compute_effective_bias_adjustment(metadata: dict) -> float:
+    validation_bias = _safe_float(metadata.get("validation_bias", 0.0), 0.0)
+    positive_factor = _safe_float(metadata.get("bias_correction_factor", 0.0), 0.0)
+    negative_factor = _safe_float(metadata.get("negative_bias_correction_factor", positive_factor), positive_factor)
+    factor = positive_factor if validation_bias >= 0 else negative_factor
+    return float(validation_bias * factor)
+
+
+def _normalize_slot_bias_adjustments(metadata: dict) -> dict[int, float]:
+    raw = metadata.get("slot_bias_adjustments", {}) or {}
+    adjustments: dict[int, float] = {}
+    for key, value in raw.items():
+        try:
+            adjustments[int(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return adjustments
+
+def _normalize_late_slot_uplift_factors(metadata: dict) -> dict[int, float]:
+    raw = metadata.get("late_slot_uplift_factors", {}) or {}
+    factors: dict[int, float] = {}
+    for key, value in raw.items():
+        try:
+            factors[int(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return factors
+
+
+def _build_late_slot_reference_value(
+    lag_volume_1_day: float | int | None,
+    same_slot_mean_3_day: float | int | None,
+    same_slot_mean_7_day: float | int | None,
+) -> float:
+    lag_1 = _safe_float(lag_volume_1_day, float("nan"))
+    same_3 = _safe_float(same_slot_mean_3_day, float("nan"))
+    same_7 = _safe_float(same_slot_mean_7_day, float("nan"))
+    reference = lag_1
+    if np.isnan(reference):
+        reference = same_3 if not np.isnan(same_3) else same_7
+    if np.isnan(reference):
+        reference = 0.0
+    same_fallback = same_3 if not np.isnan(same_3) else (same_7 if not np.isnan(same_7) else reference)
+    return float(max(reference, same_fallback))
+
+
+def _apply_late_slot_uplift(
+    adjusted: np.ndarray,
+    metadata: dict,
+    slot_index: int | None = None,
+    late_slot_reference_value: float | None = None,
+) -> np.ndarray:
+    if slot_index is None or late_slot_reference_value is None:
+        return adjusted
+
+    factors = _normalize_late_slot_uplift_factors(metadata)
+    alpha = float(factors.get(int(slot_index), 0.0))
+    if alpha <= 0:
+        return adjusted
+
+    gap_min = _safe_float(metadata.get("late_slot_reference_gap_min", 1.0), 1.0)
+    max_abs = _safe_float(metadata.get("late_slot_uplift_max_abs", 6.0), 6.0)
+    gap = float(late_slot_reference_value) - float(adjusted[0])
+    if gap <= gap_min:
+        return adjusted
+
+    uplift = float(np.clip(gap * alpha, 0.0, max_abs))
+    adjusted[0] += uplift
+    return adjusted
+
+
+def _apply_prediction_postprocess(
+    y_pred_real: np.ndarray,
+    metadata: dict,
+    slot_index: int | None = None,
+    late_slot_reference_value: float | None = None,
+) -> float:
+    adjusted = np.asarray(y_pred_real, dtype=float).copy()
+    adjusted = adjusted - _compute_effective_bias_adjustment(metadata)
+
+    if slot_index is not None:
+        slot_bias_adjustments = _normalize_slot_bias_adjustments(metadata)
+        adjusted = adjusted + float(slot_bias_adjustments.get(int(slot_index), 0.0))
+
+    adjusted = _apply_late_slot_uplift(
+        adjusted=adjusted,
+        metadata=metadata,
+        slot_index=slot_index,
+        late_slot_reference_value=late_slot_reference_value,
+    )
+    adjusted = np.maximum(adjusted, 0.0)
+    return float(adjusted[0])
 
 
 def _get_load_model():
@@ -186,6 +285,7 @@ def _prepare_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
     base_df = base_df.sort_values("datetime").reset_index(drop=True)
 
     external_by_date = _build_external_variables_by_date(db)
+    default_values = _default_external_variables()
     for column in [
         "is_holiday_peru",
         "is_holiday_spain",
@@ -195,7 +295,7 @@ def _prepare_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
         "is_holiday_any",
     ]:
         base_df[column] = base_df["interaction_date"].apply(
-            lambda current_date: float(external_by_date.get(current_date, _default_external_variables()).get(column, 0.0))
+            lambda current_date: float(external_by_date.get(current_date, default_values).get(column, 0.0))
         )
 
     for column in [
@@ -213,10 +313,64 @@ def _prepare_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
     return base_df
 
 
-def _add_features(df: pd.DataFrame, channel: str) -> pd.DataFrame:
+def _add_calendar_features(enriched: pd.DataFrame) -> pd.DataFrame:
+    unique_days = (
+        enriched[["interaction_date", "is_holiday_any"]]
+        .drop_duplicates(subset=["interaction_date"])
+        .sort_values("interaction_date")
+        .reset_index(drop=True)
+    )
+
+    unique_days["interaction_date"] = pd.to_datetime(unique_days["interaction_date"])
+    unique_days["day_of_month"] = unique_days["interaction_date"].dt.day
+    unique_days["week_of_month"] = ((unique_days["day_of_month"] - 1) // 7 + 1).astype(int)
+    unique_days["days_in_month"] = unique_days["interaction_date"].dt.days_in_month
+    unique_days["is_month_start"] = (unique_days["day_of_month"] <= 3).astype(int)
+    unique_days["is_month_end"] = (
+        unique_days["day_of_month"] >= (unique_days["days_in_month"] - 2)
+    ).astype(int)
+    unique_days["is_day_after_holiday"] = (unique_days["is_holiday_any"].shift(1).fillna(0.0) > 0).astype(int)
+
+    merge_columns = [
+        "interaction_date",
+        "week_of_month",
+        "is_month_start",
+        "is_month_end",
+        "is_day_after_holiday",
+    ]
+
+    enriched = enriched.merge(
+        unique_days[merge_columns],
+        on="interaction_date",
+        how="left",
+    )
+
+    for column in merge_columns[1:]:
+        enriched[column] = pd.to_numeric(enriched[column], errors="coerce").fillna(0).astype(int)
+
+    return enriched
+
+
+def _add_same_slot_history_features(enriched: pd.DataFrame) -> pd.DataFrame:
+    same_slot_volume = enriched.groupby("slot_index")["volume"]
+    enriched["same_slot_mean_3_day"] = (
+        same_slot_volume.shift(1).rolling(window=3, min_periods=3).mean().reset_index(level=0, drop=True)
+    )
+    enriched["same_slot_mean_7_day"] = (
+        same_slot_volume.shift(1).rolling(window=7, min_periods=7).mean().reset_index(level=0, drop=True)
+    )
+    return enriched
+
+
+def _add_features(df: pd.DataFrame, channel: str) -> tuple[pd.DataFrame, int, int]:
     enriched = df.copy()
     slots_per_day = get_slots_per_day(channel)
+    lag_one_day = slots_per_day
+    lag_two_day = slots_per_day * 2
+    lag_three_day = slots_per_day * 3
+    lag_one_week = slots_per_day * 7
 
+    enriched["interaction_date"] = pd.to_datetime(enriched["interaction_date"])
     enriched["day_of_week"] = enriched["datetime"].dt.weekday
     enriched["month"] = enriched["datetime"].dt.month
     enriched["day"] = enriched["datetime"].dt.day
@@ -227,6 +381,10 @@ def _add_features(df: pd.DataFrame, channel: str) -> pd.DataFrame:
     enriched["slot_index"] = enriched.groupby(enriched["datetime"].dt.date).cumcount()
     enriched["slot_sin"] = np.sin(2 * np.pi * enriched["slot_index"] / slots_per_day)
     enriched["slot_cos"] = np.cos(2 * np.pi * enriched["slot_index"] / slots_per_day)
+    enriched["is_opening_slot"] = (enriched["slot_index"] == 0).astype(int)
+    enriched["is_closing_slot"] = (enriched["slot_index"] == (slots_per_day - 1)).astype(int)
+    enriched["is_first_hour"] = (enriched["slot_index"] <= 1).astype(int)
+    enriched["is_last_hour"] = (enriched["slot_index"] >= (slots_per_day - 2)).astype(int)
 
     enriched["shift_label"] = enriched["minute_of_day"].apply(lambda value: get_shift_label(channel, int(value)))
     enriched["is_morning_shift"] = (enriched["shift_label"] == "morning").astype(int)
@@ -239,26 +397,33 @@ def _add_features(df: pd.DataFrame, channel: str) -> pd.DataFrame:
     enriched["minute_sin"] = np.sin(2 * np.pi * enriched["minute_of_day"] / 1440)
     enriched["minute_cos"] = np.cos(2 * np.pi * enriched["minute_of_day"] / 1440)
 
+    enriched = _add_calendar_features(enriched)
+
     enriched["lag_volume_1"] = enriched["volume"].shift(1)
     enriched["lag_volume_2"] = enriched["volume"].shift(2)
-    enriched["lag_volume_1_day"] = enriched["volume"].shift(slots_per_day)
-    enriched["lag_volume_1_week"] = enriched["volume"].shift(slots_per_day * 7)
+    enriched["lag_volume_3"] = enriched["volume"].shift(3)
+    enriched["lag_volume_1_day"] = enriched["volume"].shift(lag_one_day)
+    enriched["lag_volume_2_day"] = enriched["volume"].shift(lag_two_day)
+    enriched["lag_volume_3_day"] = enriched["volume"].shift(lag_three_day)
+    enriched["lag_volume_1_week"] = enriched["volume"].shift(lag_one_week)
 
     enriched["rolling_mean_3"] = enriched["volume"].shift(1).rolling(window=3).mean()
     enriched["rolling_mean_6"] = enriched["volume"].shift(1).rolling(window=6).mean()
-    enriched["rolling_mean_1_day"] = enriched["volume"].shift(1).rolling(window=slots_per_day).mean()
-    enriched["rolling_std_6"] = enriched["volume"].shift(1).rolling(window=6).std()
-    enriched["rolling_std_1_day"] = enriched["volume"].shift(1).rolling(window=slots_per_day).std()
-    enriched["rolling_max_1_day"] = enriched["volume"].shift(1).rolling(window=slots_per_day).max()
+    enriched["rolling_mean_1_day"] = enriched["volume"].shift(1).rolling(window=lag_one_day).mean()
+    enriched["rolling_mean_2_day"] = enriched["volume"].shift(1).rolling(window=lag_two_day).mean()
+    enriched["rolling_mean_3_day"] = enriched["volume"].shift(1).rolling(window=lag_three_day).mean()
+
+    enriched = _add_same_slot_history_features(enriched)
 
     enriched["lag_aht_1"] = enriched["aht"].shift(1)
     enriched["volume_diff_1"] = enriched["volume"].diff(1)
-    enriched["volume_diff_1_day"] = enriched["volume"].diff(slots_per_day)
-    enriched["volume_ratio_rolling_1_day"] = enriched["volume"] / (enriched["rolling_mean_1_day"] + 1.0)
+    enriched["volume_diff_1_day"] = enriched["volume"].diff(lag_one_day)
 
     enriched = enriched.dropna().reset_index(drop=True)
     if enriched.empty:
         raise ValueError("Después de generar features para inferencia, el dataset quedó vacío.")
+
+    enriched["interaction_date"] = enriched["interaction_date"].dt.date
     return enriched
 
 
@@ -275,15 +440,47 @@ def _prepare_recent_sequence(df: pd.DataFrame, metadata: dict, x_scaler) -> np.n
     sequence = scaled_features[-time_steps:]
     return np.array([sequence], dtype=np.float32)
 
+def _build_next_slot_reference_value(base_df: pd.DataFrame, channel: str, next_slot_index: int) -> float:
+    slots_per_day = get_slots_per_day(channel)
+    if base_df.empty:
+        return 0.0
 
-def _predict_next_value(model, y_scaler, metadata: dict, feature_df: pd.DataFrame, x_scaler) -> float:
+    slot_df = base_df.copy()
+    slot_df["slot_index"] = slot_df.groupby(slot_df["datetime"].dt.date).cumcount()
+    same_slot_df = (
+        slot_df[slot_df["slot_index"] == int(next_slot_index)]
+        .sort_values("datetime")
+        .reset_index(drop=True)
+    )
+    if same_slot_df.empty:
+        return 0.0
+
+    lag_1 = float(same_slot_df["volume"].iloc[-1]) if not same_slot_df.empty else 0.0
+    same_3 = float(same_slot_df["volume"].tail(3).mean()) if len(same_slot_df) >= 1 else lag_1
+    same_7 = float(same_slot_df["volume"].tail(7).mean()) if len(same_slot_df) >= 1 else same_3
+    return _build_late_slot_reference_value(lag_1, same_3, same_7)
+
+
+def _predict_next_value(
+    model,
+    y_scaler,
+    metadata: dict,
+    feature_df: pd.DataFrame,
+    x_scaler,
+    next_slot_index: int,
+    base_df: pd.DataFrame,
+    channel: str,
+) -> float:
     X_input = _prepare_recent_sequence(feature_df, metadata, x_scaler)
     y_pred_scaled = model.predict(X_input, verbose=0).flatten()
     y_pred_real = _inverse_target_transform(y_pred_scaled, y_scaler)
-
-    validation_bias = float(metadata.get("validation_bias", 0.0))
-    bias_correction_factor = float(metadata.get("bias_correction_factor", 0.0))
-    return float(np.maximum(y_pred_real[0] - (validation_bias * bias_correction_factor), 0.0))
+    late_slot_reference_value = _build_next_slot_reference_value(base_df, channel, next_slot_index)
+    return _apply_prediction_postprocess(
+        y_pred_real,
+        metadata,
+        slot_index=next_slot_index,
+        late_slot_reference_value=late_slot_reference_value,
+    )
 
 
 def _build_aht_profile(base_df: pd.DataFrame, channel: str) -> dict:
@@ -331,7 +528,7 @@ def predict_next_operational_day_for_channel(db: Session, channel: str) -> dict:
     forecast_slots = get_operational_day_datetimes(forecast_date, canonical_channel)
     forecast_start_datetime = get_operational_day_start_datetime(forecast_date, canonical_channel)
     external_vars = external_by_date.get(forecast_date, _default_external_variables())
-    model_version = metadata.get("model_version", "lstm_v2_operational")
+    model_version = metadata.get("model_version", "lstm_v4_1_feature_pruned_late_uplift")
 
     intervals: list[dict] = []
     recursive_base_df = base_df.copy()
@@ -344,6 +541,9 @@ def predict_next_operational_day_for_channel(db: Session, channel: str) -> dict:
             metadata=metadata,
             feature_df=recursive_feature_df,
             x_scaler=x_scaler,
+            next_slot_index=slot_index,
+            base_df=recursive_base_df,
+            channel=canonical_channel,
         )
 
         minute_of_day = slot_datetime.hour * 60 + slot_datetime.minute
