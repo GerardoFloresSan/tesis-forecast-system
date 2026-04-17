@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import calendar
 import json
 import math
 import os
@@ -37,7 +38,14 @@ BATCH_SIZE = 32
 TRAIN_SPLIT = 0.8
 VALIDATION_SPLIT_WITHIN_TRAIN = 0.2
 RANDOM_SEED = 42
-BIAS_CORRECTION_FACTOR = 0.35
+BIAS_CORRECTION_FACTOR = 0.20
+NEGATIVE_BIAS_CORRECTION_FACTOR = 0.05
+SLOT_BIAS_ADJUSTMENT_SHRINK = 0.35
+SLOT_BIAS_ADJUSTMENT_LATE_MULTIPLIER = 1.15
+MIN_SLOT_ADJUSTMENT_ABS = 1.0
+MAX_SLOT_ADJUSTMENT_ABS = 6.0
+MIN_SLOT_ADJUSTMENT_COUNT = 3
+LATE_SLOT_WINDOW = 6
 BASE_DIR = Path(__file__).resolve().parents[1]
 MODEL_DIR = BASE_DIR / "data" / "models"
 
@@ -82,6 +90,78 @@ def calculate_smape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 def calculate_bias(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.mean(np.array(y_pred, dtype=float) - np.array(y_true, dtype=float)))
+
+
+def compute_effective_bias_adjustment(validation_bias: float) -> float:
+    validation_bias = float(validation_bias or 0.0)
+    factor = BIAS_CORRECTION_FACTOR if validation_bias >= 0 else NEGATIVE_BIAS_CORRECTION_FACTOR
+    return float(validation_bias * factor)
+
+
+def build_slot_bias_adjustments(
+    slot_indices: np.ndarray,
+    y_true: np.ndarray,
+    y_pred_after_global_bias: np.ndarray,
+    slots_per_day: int,
+) -> dict[int, float]:
+    if len(slot_indices) == 0 or len(y_true) == 0 or len(y_pred_after_global_bias) == 0:
+        return {}
+
+    aligned_n = min(len(slot_indices), len(y_true), len(y_pred_after_global_bias))
+    residual_df = pd.DataFrame(
+        {
+            "slot_index": np.asarray(slot_indices[:aligned_n], dtype=int),
+            "residual": np.asarray(y_true[:aligned_n], dtype=float)
+            - np.asarray(y_pred_after_global_bias[:aligned_n], dtype=float),
+        }
+    )
+
+    grouped = (
+        residual_df.groupby("slot_index", as_index=False)
+        .agg(mean_residual=("residual", "mean"), n=("residual", "size"))
+        .sort_values("slot_index")
+    )
+
+    late_slot_start = max(0, int(slots_per_day) - LATE_SLOT_WINDOW)
+    adjustments: dict[int, float] = {}
+    for _, row in grouped.iterrows():
+        slot_index = int(row["slot_index"])
+        count = int(row["n"])
+        mean_residual = float(row["mean_residual"])
+
+        if count < MIN_SLOT_ADJUSTMENT_COUNT:
+            continue
+        if abs(mean_residual) < MIN_SLOT_ADJUSTMENT_ABS:
+            continue
+
+        slot_adjustment = mean_residual * SLOT_BIAS_ADJUSTMENT_SHRINK
+        if slot_index >= late_slot_start:
+            slot_adjustment *= SLOT_BIAS_ADJUSTMENT_LATE_MULTIPLIER
+
+        slot_adjustment = float(
+            np.clip(slot_adjustment, -MAX_SLOT_ADJUSTMENT_ABS, MAX_SLOT_ADJUSTMENT_ABS)
+        )
+        adjustments[slot_index] = slot_adjustment
+
+    return adjustments
+
+
+def apply_prediction_postprocess(
+    y_pred_real: np.ndarray,
+    validation_bias: float = 0.0,
+    slot_indices: np.ndarray | None = None,
+    slot_bias_adjustments: dict[int, float] | None = None,
+) -> np.ndarray:
+    adjusted = np.asarray(y_pred_real, dtype=float).copy()
+    adjusted = adjusted - compute_effective_bias_adjustment(validation_bias)
+
+    if slot_indices is not None and slot_bias_adjustments:
+        slot_indices = np.asarray(slot_indices, dtype=int)
+        aligned_n = min(len(adjusted), len(slot_indices))
+        for index in range(aligned_n):
+            adjusted[index] += float(slot_bias_adjustments.get(int(slot_indices[index]), 0.0))
+
+    return np.maximum(adjusted, 0.0)
 
 
 def create_sequences(features: np.ndarray, target: np.ndarray, time_steps: int):
@@ -229,13 +309,65 @@ def load_and_prepare_dataset(engine, channel: str) -> pd.DataFrame:
     return df
 
 
+def _add_calendar_features(enriched: pd.DataFrame) -> pd.DataFrame:
+    unique_days = (
+        enriched[["interaction_date", "is_holiday_any"]]
+        .drop_duplicates(subset=["interaction_date"])
+        .sort_values("interaction_date")
+        .reset_index(drop=True)
+    )
+
+    unique_days["interaction_date"] = pd.to_datetime(unique_days["interaction_date"])
+    unique_days["day_of_month"] = unique_days["interaction_date"].dt.day
+    unique_days["week_of_month"] = ((unique_days["day_of_month"] - 1) // 7 + 1).astype(int)
+    unique_days["days_in_month"] = unique_days["interaction_date"].dt.days_in_month
+    unique_days["is_month_start"] = (unique_days["day_of_month"] <= 3).astype(int)
+    unique_days["is_month_end"] = (
+        unique_days["day_of_month"] >= (unique_days["days_in_month"] - 2)
+    ).astype(int)
+    unique_days["is_day_after_holiday"] = (unique_days["is_holiday_any"].shift(1).fillna(0.0) > 0).astype(int)
+
+    merge_columns = [
+        "interaction_date",
+        "week_of_month",
+        "is_month_start",
+        "is_month_end",
+        "is_day_after_holiday",
+    ]
+
+    enriched = enriched.merge(
+        unique_days[merge_columns],
+        on="interaction_date",
+        how="left",
+    )
+
+    for column in merge_columns[1:]:
+        enriched[column] = pd.to_numeric(enriched[column], errors="coerce").fillna(0).astype(int)
+
+    return enriched
+
+
+def _add_same_slot_history_features(enriched: pd.DataFrame) -> pd.DataFrame:
+    same_slot_volume = enriched.groupby("slot_index")["volume"]
+    enriched["same_slot_mean_3_day"] = (
+        same_slot_volume.shift(1).rolling(window=3, min_periods=3).mean().reset_index(level=0, drop=True)
+    )
+    enriched["same_slot_mean_7_day"] = (
+        same_slot_volume.shift(1).rolling(window=7, min_periods=7).mean().reset_index(level=0, drop=True)
+    )
+    return enriched
+
+
 def add_time_and_lag_features(df: pd.DataFrame, channel: str) -> tuple[pd.DataFrame, int, int]:
     enriched = df.copy()
     slots_per_day = get_slots_per_day(channel)
     time_steps = slots_per_day
     lag_one_day = slots_per_day
+    lag_two_day = slots_per_day * 2
+    lag_three_day = slots_per_day * 3
     lag_one_week = slots_per_day * 7
 
+    enriched["interaction_date"] = pd.to_datetime(enriched["interaction_date"])
     enriched["day_of_week"] = enriched["datetime"].dt.weekday
     enriched["month"] = enriched["datetime"].dt.month
     enriched["day"] = enriched["datetime"].dt.day
@@ -246,6 +378,10 @@ def add_time_and_lag_features(df: pd.DataFrame, channel: str) -> tuple[pd.DataFr
     enriched["slot_index"] = enriched.groupby(enriched["datetime"].dt.date).cumcount()
     enriched["slot_sin"] = np.sin(2 * np.pi * enriched["slot_index"] / slots_per_day)
     enriched["slot_cos"] = np.cos(2 * np.pi * enriched["slot_index"] / slots_per_day)
+    enriched["is_opening_slot"] = (enriched["slot_index"] == 0).astype(int)
+    enriched["is_closing_slot"] = (enriched["slot_index"] == (slots_per_day - 1)).astype(int)
+    enriched["is_first_hour"] = (enriched["slot_index"] <= 1).astype(int)
+    enriched["is_last_hour"] = (enriched["slot_index"] >= (slots_per_day - 2)).astype(int)
 
     enriched["shift_label"] = enriched["minute_of_day"].apply(lambda value: get_shift_label(channel, int(value)))
     enriched["is_morning_shift"] = (enriched["shift_label"] == "morning").astype(int)
@@ -258,27 +394,33 @@ def add_time_and_lag_features(df: pd.DataFrame, channel: str) -> tuple[pd.DataFr
     enriched["minute_sin"] = np.sin(2 * np.pi * enriched["minute_of_day"] / 1440)
     enriched["minute_cos"] = np.cos(2 * np.pi * enriched["minute_of_day"] / 1440)
 
+    enriched = _add_calendar_features(enriched)
+
     enriched["lag_volume_1"] = enriched["volume"].shift(1)
     enriched["lag_volume_2"] = enriched["volume"].shift(2)
+    enriched["lag_volume_3"] = enriched["volume"].shift(3)
     enriched["lag_volume_1_day"] = enriched["volume"].shift(lag_one_day)
+    enriched["lag_volume_2_day"] = enriched["volume"].shift(lag_two_day)
+    enriched["lag_volume_3_day"] = enriched["volume"].shift(lag_three_day)
     enriched["lag_volume_1_week"] = enriched["volume"].shift(lag_one_week)
 
     enriched["rolling_mean_3"] = enriched["volume"].shift(1).rolling(window=3).mean()
     enriched["rolling_mean_6"] = enriched["volume"].shift(1).rolling(window=6).mean()
     enriched["rolling_mean_1_day"] = enriched["volume"].shift(1).rolling(window=lag_one_day).mean()
-    enriched["rolling_std_6"] = enriched["volume"].shift(1).rolling(window=6).std()
-    enriched["rolling_std_1_day"] = enriched["volume"].shift(1).rolling(window=lag_one_day).std()
-    enriched["rolling_max_1_day"] = enriched["volume"].shift(1).rolling(window=lag_one_day).max()
+    enriched["rolling_mean_2_day"] = enriched["volume"].shift(1).rolling(window=lag_two_day).mean()
+    enriched["rolling_mean_3_day"] = enriched["volume"].shift(1).rolling(window=lag_three_day).mean()
+
+    enriched = _add_same_slot_history_features(enriched)
 
     enriched["lag_aht_1"] = enriched["aht"].shift(1)
     enriched["volume_diff_1"] = enriched["volume"].diff(1)
     enriched["volume_diff_1_day"] = enriched["volume"].diff(lag_one_day)
-    enriched["volume_ratio_rolling_1_day"] = enriched["volume"] / (enriched["rolling_mean_1_day"] + 1.0)
 
     enriched = enriched.dropna().reset_index(drop=True)
     if enriched.empty:
         raise ValueError("Después de generar lags y rolling, el dataset quedó vacío.")
 
+    enriched["interaction_date"] = enriched["interaction_date"].dt.date
     return enriched, slots_per_day, time_steps
 
 
@@ -295,6 +437,14 @@ def build_feature_columns() -> list[str]:
         "is_weekend",
         "is_morning_shift",
         "is_afternoon_shift",
+        "is_opening_slot",
+        "is_closing_slot",
+        "is_first_hour",
+        "is_last_hour",
+        "week_of_month",
+        "is_month_start",
+        "is_month_end",
+        "is_day_after_holiday",
         "dow_sin",
         "dow_cos",
         "month_sin",
@@ -305,18 +455,21 @@ def build_feature_columns() -> list[str]:
         "slot_cos",
         "lag_volume_1",
         "lag_volume_2",
+        "lag_volume_3",
         "lag_volume_1_day",
+        "lag_volume_2_day",
+        "lag_volume_3_day",
         "lag_volume_1_week",
         "rolling_mean_3",
         "rolling_mean_6",
         "rolling_mean_1_day",
-        "rolling_std_6",
-        "rolling_std_1_day",
-        "rolling_max_1_day",
+        "rolling_mean_2_day",
+        "rolling_mean_3_day",
+        "same_slot_mean_3_day",
+        "same_slot_mean_7_day",
         "lag_aht_1",
         "volume_diff_1",
         "volume_diff_1_day",
-        "volume_ratio_rolling_1_day",
     ]
 
 
@@ -373,12 +526,15 @@ def main(channel: str):
 
     dataset = df[feature_columns].copy()
     target = np.log1p(df[["volume"]].copy())
+    calibration_meta = df[["slot_index"]].copy()
 
     split_index = int(len(dataset) * TRAIN_SPLIT)
     train_features = dataset.iloc[:split_index].copy()
     test_features = dataset.iloc[split_index:].copy()
     train_target = target.iloc[:split_index].copy()
     test_target = target.iloc[split_index:].copy()
+    train_meta_base = calibration_meta.iloc[:split_index].copy()
+    test_meta_base = calibration_meta.iloc[split_index:].copy()
 
     if len(train_features) <= time_steps or len(test_features) <= time_steps:
         raise ValueError("No hay suficientes datos para train/test con el TIME_STEPS actual.")
@@ -426,10 +582,39 @@ def main(channel: str):
     y_val_inv = inverse_target_transform(y_val.flatten(), y_scaler)
     validation_bias = calculate_bias(y_val_inv, y_val_pred_inv)
 
+    train_meta_df = train_meta_base.iloc[time_steps:].copy().reset_index(drop=True)
+    val_meta_df = train_meta_df.iloc[-len(y_val_inv):].copy().reset_index(drop=True)
+    val_slot_indices = val_meta_df["slot_index"].astype(int).values if not val_meta_df.empty else np.array([], dtype=int)
+
+    y_val_pred_after_global_bias = apply_prediction_postprocess(
+        y_val_pred_inv,
+        validation_bias=validation_bias,
+    )
+    slot_bias_adjustments = build_slot_bias_adjustments(
+        slot_indices=val_slot_indices,
+        y_true=y_val_inv,
+        y_pred_after_global_bias=y_val_pred_after_global_bias,
+        slots_per_day=slots_per_day,
+    )
+    y_val_pred_post = apply_prediction_postprocess(
+        y_val_pred_inv,
+        validation_bias=validation_bias,
+        slot_indices=val_slot_indices,
+        slot_bias_adjustments=slot_bias_adjustments,
+    )
+
     y_pred_scaled = model.predict(X_test, verbose=0).flatten()
     y_pred_inv = inverse_target_transform(y_pred_scaled, y_scaler)
     y_test_inv = inverse_target_transform(y_test.flatten(), y_scaler)
-    y_pred_inv = np.maximum(y_pred_inv - (validation_bias * BIAS_CORRECTION_FACTOR), 0.0)
+
+    test_meta_df = test_meta_base.iloc[time_steps:].copy().reset_index(drop=True)
+    test_slot_indices = test_meta_df["slot_index"].astype(int).values if not test_meta_df.empty else np.array([], dtype=int)
+    y_pred_inv = apply_prediction_postprocess(
+        y_pred_inv,
+        validation_bias=validation_bias,
+        slot_indices=test_slot_indices,
+        slot_bias_adjustments=slot_bias_adjustments,
+    )
 
     mae = float(mean_absolute_error(y_test_inv, y_pred_inv))
     rmse = float(math.sqrt(mean_squared_error(y_test_inv, y_pred_inv)))
@@ -454,7 +639,7 @@ def main(channel: str):
     }
 
     best_val_loss = min(history.history.get("val_loss", []) or [0.0])
-    model_version = f"lstm_{slugify_channel(canonical_channel)}_v2_operational"
+    model_version = f"lstm_{slugify_channel(canonical_channel)}_v4_feature_pruned_calibrated"
 
     metadata = {
         "channel": canonical_channel,
@@ -470,8 +655,16 @@ def main(channel: str):
         "model_version": model_version,
         "target_transform": "log1p",
         "validation_bias": float(validation_bias),
+        "effective_bias_adjustment": float(compute_effective_bias_adjustment(validation_bias)),
         "bias_correction_factor": float(BIAS_CORRECTION_FACTOR),
+        "negative_bias_correction_factor": float(NEGATIVE_BIAS_CORRECTION_FACTOR),
+        "slot_bias_adjustments": {str(k): float(v) for k, v in slot_bias_adjustments.items()},
+        "slot_bias_adjustment_shrink": float(SLOT_BIAS_ADJUSTMENT_SHRINK),
+        "slot_bias_adjustment_late_multiplier": float(SLOT_BIAS_ADJUSTMENT_LATE_MULTIPLIER),
+        "late_slot_window": int(LATE_SLOT_WINDOW),
         "baseline_name": "naive_previous_operational_day",
+        "feature_set_version": "v3_feature_pruned_calibrated",
+        "postprocess_version": "v1_bias_slot_calibration",
     }
 
     metrics = {
@@ -489,8 +682,12 @@ def main(channel: str):
         "time_steps": int(time_steps),
         "slots_per_day": int(slots_per_day),
         "model_version": model_version,
+        "feature_set_version": "v3_feature_pruned_calibrated",
+        "postprocess_version": "v1_bias_slot_calibration",
         "baseline_name": "naive_previous_operational_day",
         "baseline_metrics": baseline_metrics,
+        "calibration_slots": len(slot_bias_adjustments),
+        "effective_bias_adjustment": round(float(compute_effective_bias_adjustment(validation_bias)), 4),
     }
 
     save_artifacts(
