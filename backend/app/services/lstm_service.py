@@ -50,8 +50,65 @@ def _normalize_slot_bias_adjustments(metadata: dict) -> dict[int, float]:
             continue
     return adjustments
 
+def _normalize_late_slot_uplift_factors(metadata: dict) -> dict[int, float]:
+    raw = metadata.get("late_slot_uplift_factors", {}) or {}
+    factors: dict[int, float] = {}
+    for key, value in raw.items():
+        try:
+            factors[int(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return factors
 
-def _apply_prediction_postprocess(y_pred_real: np.ndarray, metadata: dict, slot_index: int | None = None) -> float:
+
+def _build_late_slot_reference_value(
+    lag_volume_1_day: float | int | None,
+    same_slot_mean_3_day: float | int | None,
+    same_slot_mean_7_day: float | int | None,
+) -> float:
+    lag_1 = _safe_float(lag_volume_1_day, float("nan"))
+    same_3 = _safe_float(same_slot_mean_3_day, float("nan"))
+    same_7 = _safe_float(same_slot_mean_7_day, float("nan"))
+    reference = lag_1
+    if np.isnan(reference):
+        reference = same_3 if not np.isnan(same_3) else same_7
+    if np.isnan(reference):
+        reference = 0.0
+    same_fallback = same_3 if not np.isnan(same_3) else (same_7 if not np.isnan(same_7) else reference)
+    return float(max(reference, same_fallback))
+
+
+def _apply_late_slot_uplift(
+    adjusted: np.ndarray,
+    metadata: dict,
+    slot_index: int | None = None,
+    late_slot_reference_value: float | None = None,
+) -> np.ndarray:
+    if slot_index is None or late_slot_reference_value is None:
+        return adjusted
+
+    factors = _normalize_late_slot_uplift_factors(metadata)
+    alpha = float(factors.get(int(slot_index), 0.0))
+    if alpha <= 0:
+        return adjusted
+
+    gap_min = _safe_float(metadata.get("late_slot_reference_gap_min", 1.0), 1.0)
+    max_abs = _safe_float(metadata.get("late_slot_uplift_max_abs", 6.0), 6.0)
+    gap = float(late_slot_reference_value) - float(adjusted[0])
+    if gap <= gap_min:
+        return adjusted
+
+    uplift = float(np.clip(gap * alpha, 0.0, max_abs))
+    adjusted[0] += uplift
+    return adjusted
+
+
+def _apply_prediction_postprocess(
+    y_pred_real: np.ndarray,
+    metadata: dict,
+    slot_index: int | None = None,
+    late_slot_reference_value: float | None = None,
+) -> float:
     adjusted = np.asarray(y_pred_real, dtype=float).copy()
     adjusted = adjusted - _compute_effective_bias_adjustment(metadata)
 
@@ -59,6 +116,12 @@ def _apply_prediction_postprocess(y_pred_real: np.ndarray, metadata: dict, slot_
         slot_bias_adjustments = _normalize_slot_bias_adjustments(metadata)
         adjusted = adjusted + float(slot_bias_adjustments.get(int(slot_index), 0.0))
 
+    adjusted = _apply_late_slot_uplift(
+        adjusted=adjusted,
+        metadata=metadata,
+        slot_index=slot_index,
+        late_slot_reference_value=late_slot_reference_value,
+    )
     adjusted = np.maximum(adjusted, 0.0)
     return float(adjusted[0])
 
@@ -377,6 +440,26 @@ def _prepare_recent_sequence(df: pd.DataFrame, metadata: dict, x_scaler) -> np.n
     sequence = scaled_features[-time_steps:]
     return np.array([sequence], dtype=np.float32)
 
+def _build_next_slot_reference_value(base_df: pd.DataFrame, channel: str, next_slot_index: int) -> float:
+    slots_per_day = get_slots_per_day(channel)
+    if base_df.empty:
+        return 0.0
+
+    slot_df = base_df.copy()
+    slot_df["slot_index"] = slot_df.groupby(slot_df["datetime"].dt.date).cumcount()
+    same_slot_df = (
+        slot_df[slot_df["slot_index"] == int(next_slot_index)]
+        .sort_values("datetime")
+        .reset_index(drop=True)
+    )
+    if same_slot_df.empty:
+        return 0.0
+
+    lag_1 = float(same_slot_df["volume"].iloc[-1]) if not same_slot_df.empty else 0.0
+    same_3 = float(same_slot_df["volume"].tail(3).mean()) if len(same_slot_df) >= 1 else lag_1
+    same_7 = float(same_slot_df["volume"].tail(7).mean()) if len(same_slot_df) >= 1 else same_3
+    return _build_late_slot_reference_value(lag_1, same_3, same_7)
+
 
 def _predict_next_value(
     model,
@@ -385,11 +468,19 @@ def _predict_next_value(
     feature_df: pd.DataFrame,
     x_scaler,
     next_slot_index: int,
+    base_df: pd.DataFrame,
+    channel: str,
 ) -> float:
     X_input = _prepare_recent_sequence(feature_df, metadata, x_scaler)
     y_pred_scaled = model.predict(X_input, verbose=0).flatten()
     y_pred_real = _inverse_target_transform(y_pred_scaled, y_scaler)
-    return _apply_prediction_postprocess(y_pred_real, metadata, slot_index=next_slot_index)
+    late_slot_reference_value = _build_next_slot_reference_value(base_df, channel, next_slot_index)
+    return _apply_prediction_postprocess(
+        y_pred_real,
+        metadata,
+        slot_index=next_slot_index,
+        late_slot_reference_value=late_slot_reference_value,
+    )
 
 
 def _build_aht_profile(base_df: pd.DataFrame, channel: str) -> dict:
@@ -437,7 +528,7 @@ def predict_next_operational_day_for_channel(db: Session, channel: str) -> dict:
     forecast_slots = get_operational_day_datetimes(forecast_date, canonical_channel)
     forecast_start_datetime = get_operational_day_start_datetime(forecast_date, canonical_channel)
     external_vars = external_by_date.get(forecast_date, _default_external_variables())
-    model_version = metadata.get("model_version", "lstm_v4_feature_pruned_calibrated")
+    model_version = metadata.get("model_version", "lstm_v4_1_feature_pruned_late_uplift")
 
     intervals: list[dict] = []
     recursive_base_df = base_df.copy()
@@ -451,6 +542,8 @@ def predict_next_operational_day_for_channel(db: Session, channel: str) -> dict:
             feature_df=recursive_feature_df,
             x_scaler=x_scaler,
             next_slot_index=slot_index,
+            base_df=recursive_base_df,
+            channel=canonical_channel,
         )
 
         minute_of_day = slot_datetime.hour * 60 + slot_datetime.minute

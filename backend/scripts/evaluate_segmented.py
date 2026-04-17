@@ -33,6 +33,8 @@ from scripts.train_lstm import (
     add_time_and_lag_features,
     apply_prediction_postprocess,
     build_slot_bias_adjustments,
+    build_late_slot_reference_values,
+    build_late_slot_uplift_factors,
     compute_effective_bias_adjustment,
     build_feature_columns,
     build_lstm_model,
@@ -263,6 +265,15 @@ def evaluate_saved_model_holdout(df: pd.DataFrame, channel: str) -> dict[str, An
     test_df = df.iloc[split_index:].copy().reset_index(drop=True)
     meta_df = test_df.iloc[time_steps:].copy().reset_index(drop=True)
     slot_indices = meta_df["slot_index"].astype(int).values if not meta_df.empty else np.array([], dtype=int)
+    late_slot_reference_values = (
+        build_late_slot_reference_values(
+            meta_df["lag_volume_1_day"].values,
+            meta_df["same_slot_mean_3_day"].values,
+            meta_df["same_slot_mean_7_day"].values,
+        )
+        if not meta_df.empty
+        else np.array([], dtype=float)
+    )
     y_pred = apply_prediction_postprocess(
         y_pred,
         validation_bias=float(metadata.get("validation_bias", 0.0)),
@@ -270,6 +281,11 @@ def evaluate_saved_model_holdout(df: pd.DataFrame, channel: str) -> dict[str, An
         slot_bias_adjustments={
             int(key): float(value)
             for key, value in (metadata.get("slot_bias_adjustments", {}) or {}).items()
+        },
+        late_slot_reference_values=late_slot_reference_values,
+        late_slot_uplift_factors={
+            int(key): float(value)
+            for key, value in (metadata.get("late_slot_uplift_factors", {}) or {}).items()
         },
     )
 
@@ -352,6 +368,15 @@ def train_and_predict_fold(train_df: pd.DataFrame, test_df: pd.DataFrame, featur
     train_meta_df = train_df.iloc[time_steps:].copy().reset_index(drop=True)
     val_meta_df = train_meta_df.iloc[-len(y_val_real):].copy().reset_index(drop=True)
     val_slot_indices = val_meta_df["slot_index"].astype(int).values if not val_meta_df.empty else np.array([], dtype=int)
+    val_late_slot_reference_values = (
+        build_late_slot_reference_values(
+            val_meta_df["lag_volume_1_day"].values,
+            val_meta_df["same_slot_mean_3_day"].values,
+            val_meta_df["same_slot_mean_7_day"].values,
+        )
+        if not val_meta_df.empty
+        else np.array([], dtype=float)
+    )
 
     y_val_pred_after_global_bias = apply_prediction_postprocess(
         y_val_pred,
@@ -363,6 +388,19 @@ def train_and_predict_fold(train_df: pd.DataFrame, test_df: pd.DataFrame, featur
         y_pred_after_global_bias=y_val_pred_after_global_bias,
         slots_per_day=time_steps,
     )
+    y_val_pred_after_slot_bias = apply_prediction_postprocess(
+        y_val_pred,
+        validation_bias=validation_bias,
+        slot_indices=val_slot_indices,
+        slot_bias_adjustments=slot_bias_adjustments,
+    )
+    late_slot_uplift_factors = build_late_slot_uplift_factors(
+        slot_indices=val_slot_indices,
+        y_true=y_val_real,
+        y_pred_after_slot_bias=y_val_pred_after_slot_bias,
+        late_slot_reference_values=val_late_slot_reference_values,
+        slots_per_day=time_steps,
+    )
 
     y_test_pred_scaled = model.predict(X_test, verbose=0).flatten()
     y_test_pred = inverse_target_transform(y_test_pred_scaled, y_scaler)
@@ -372,11 +410,22 @@ def train_and_predict_fold(train_df: pd.DataFrame, test_df: pd.DataFrame, featur
     test_slot_indices = (
         aligned_test_df["slot_index"].astype(int).values if not aligned_test_df.empty else np.array([], dtype=int)
     )
+    test_late_slot_reference_values = (
+        build_late_slot_reference_values(
+            aligned_test_df["lag_volume_1_day"].values,
+            aligned_test_df["same_slot_mean_3_day"].values,
+            aligned_test_df["same_slot_mean_7_day"].values,
+        )
+        if not aligned_test_df.empty
+        else np.array([], dtype=float)
+    )
     y_test_pred = apply_prediction_postprocess(
         y_test_pred,
         validation_bias=validation_bias,
         slot_indices=test_slot_indices,
         slot_bias_adjustments=slot_bias_adjustments,
+        late_slot_reference_values=test_late_slot_reference_values,
+        late_slot_uplift_factors=late_slot_uplift_factors,
     )
 
     aligned_test_df = test_df.iloc[time_steps:].copy().reset_index(drop=True)
@@ -397,6 +446,7 @@ def train_and_predict_fold(train_df: pd.DataFrame, test_df: pd.DataFrame, featur
         "validation_bias": validation_bias,
         "effective_bias_adjustment": compute_effective_bias_adjustment(validation_bias),
         "slot_bias_adjustments": slot_bias_adjustments,
+        "late_slot_uplift_factors": late_slot_uplift_factors,
         "best_val_loss": min(history.history.get("val_loss", []) or [0.0]),
         "train_sequences": int(len(X_train)),
         "validation_sequences": int(len(X_val)),
@@ -470,6 +520,7 @@ def evaluate_walk_forward(
             "validation_bias": safe_float(fold_result["validation_bias"]),
             "effective_bias_adjustment": safe_float(fold_result["effective_bias_adjustment"]),
             "calibration_slots": len(fold_result["slot_bias_adjustments"]),
+            "late_uplift_slots": len(fold_result.get("late_slot_uplift_factors", {})),
             "best_val_loss": safe_float(fold_result["best_val_loss"], 6),
             "global": fold_report["global"],
             "baseline_global": fold_report.get("baseline_global"),

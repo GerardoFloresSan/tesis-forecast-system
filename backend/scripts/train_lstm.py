@@ -46,6 +46,11 @@ MIN_SLOT_ADJUSTMENT_ABS = 1.0
 MAX_SLOT_ADJUSTMENT_ABS = 6.0
 MIN_SLOT_ADJUSTMENT_COUNT = 3
 LATE_SLOT_WINDOW = 6
+LATE_SLOT_REFERENCE_GAP_MIN = 1.0
+LATE_SLOT_UPLIFT_MAX_ABS = 6.0
+LATE_SLOT_ALPHA_SHRINK = 0.30
+LATE_SLOT_ALPHA_MAX = 0.45
+SLOT31_ALPHA_MULTIPLIER = 1.20
 BASE_DIR = Path(__file__).resolve().parents[1]
 MODEL_DIR = BASE_DIR / "data" / "models"
 
@@ -146,11 +151,132 @@ def build_slot_bias_adjustments(
     return adjustments
 
 
+def build_late_slot_reference_values(
+    lag_volume_1_day: np.ndarray | pd.Series,
+    same_slot_mean_3_day: np.ndarray | pd.Series,
+    same_slot_mean_7_day: np.ndarray | pd.Series | None = None,
+) -> np.ndarray:
+    lag_1 = np.asarray(lag_volume_1_day, dtype=float)
+    same_3 = np.asarray(same_slot_mean_3_day, dtype=float)
+    if same_slot_mean_7_day is None:
+        same_7 = np.full_like(lag_1, np.nan, dtype=float)
+    else:
+        same_7 = np.asarray(same_slot_mean_7_day, dtype=float)
+
+    reference = lag_1.copy()
+    same_3_fallback = np.where(np.isnan(same_3), same_7, same_3)
+    reference = np.where(np.isnan(reference), same_3_fallback, reference)
+    reference = np.where(np.isnan(reference), 0.0, reference)
+    same_3_fallback = np.where(np.isnan(same_3_fallback), reference, same_3_fallback)
+    return np.maximum(reference, same_3_fallback)
+
+
+def build_late_slot_uplift_factors(
+    slot_indices: np.ndarray,
+    y_true: np.ndarray,
+    y_pred_after_slot_bias: np.ndarray,
+    late_slot_reference_values: np.ndarray,
+    slots_per_day: int,
+) -> dict[int, float]:
+    if len(slot_indices) == 0 or len(y_true) == 0 or len(y_pred_after_slot_bias) == 0:
+        return {}
+
+    aligned_n = min(
+        len(slot_indices),
+        len(y_true),
+        len(y_pred_after_slot_bias),
+        len(late_slot_reference_values),
+    )
+    uplift_df = pd.DataFrame(
+        {
+            "slot_index": np.asarray(slot_indices[:aligned_n], dtype=int),
+            "y_true": np.asarray(y_true[:aligned_n], dtype=float),
+            "y_pred": np.asarray(y_pred_after_slot_bias[:aligned_n], dtype=float),
+            "reference_value": np.asarray(late_slot_reference_values[:aligned_n], dtype=float),
+        }
+    )
+
+    late_slot_start = max(0, int(slots_per_day) - LATE_SLOT_WINDOW)
+    uplift_df = uplift_df[uplift_df["slot_index"] >= late_slot_start].copy()
+    if uplift_df.empty:
+        return {}
+
+    uplift_df["gap_to_reference"] = uplift_df["reference_value"] - uplift_df["y_pred"]
+    uplift_df["residual"] = uplift_df["y_true"] - uplift_df["y_pred"]
+    uplift_df = uplift_df[
+        (uplift_df["gap_to_reference"] > LATE_SLOT_REFERENCE_GAP_MIN)
+        & (uplift_df["residual"] > 0)
+    ].copy()
+    if uplift_df.empty:
+        return {}
+
+    uplift_df["ratio"] = uplift_df["residual"] / uplift_df["gap_to_reference"]
+    uplift_df["ratio"] = uplift_df["ratio"].clip(lower=0.0, upper=1.0)
+
+    grouped = (
+        uplift_df.groupby("slot_index", as_index=False)
+        .agg(alpha_base=("ratio", "median"), n=("ratio", "size"))
+        .sort_values("slot_index")
+    )
+
+    last_slot_index = max(0, int(slots_per_day) - 1)
+    factors: dict[int, float] = {}
+    for _, row in grouped.iterrows():
+        slot_index = int(row["slot_index"])
+        count = int(row["n"])
+        if count < MIN_SLOT_ADJUSTMENT_COUNT:
+            continue
+
+        alpha = float(row["alpha_base"]) * LATE_SLOT_ALPHA_SHRINK
+        if slot_index == last_slot_index:
+            alpha *= SLOT31_ALPHA_MULTIPLIER
+
+        alpha = float(np.clip(alpha, 0.0, LATE_SLOT_ALPHA_MAX))
+        if alpha <= 0:
+            continue
+        factors[slot_index] = alpha
+
+    return factors
+
+
+def apply_late_slot_uplift(
+    adjusted: np.ndarray,
+    slot_indices: np.ndarray | None = None,
+    late_slot_reference_values: np.ndarray | None = None,
+    late_slot_uplift_factors: dict[int, float] | None = None,
+) -> np.ndarray:
+    uplifted = np.asarray(adjusted, dtype=float).copy()
+    if slot_indices is None or late_slot_reference_values is None or not late_slot_uplift_factors:
+        return uplifted
+
+    slot_indices = np.asarray(slot_indices, dtype=int)
+    late_slot_reference_values = np.asarray(late_slot_reference_values, dtype=float)
+    aligned_n = min(len(uplifted), len(slot_indices), len(late_slot_reference_values))
+
+    for index in range(aligned_n):
+        slot_index = int(slot_indices[index])
+        alpha = float(late_slot_uplift_factors.get(slot_index, 0.0))
+        if alpha <= 0:
+            continue
+
+        reference_value = float(late_slot_reference_values[index])
+        gap = reference_value - float(uplifted[index])
+        if gap <= LATE_SLOT_REFERENCE_GAP_MIN:
+            continue
+
+        uplift = float(np.clip(gap * alpha, 0.0, LATE_SLOT_UPLIFT_MAX_ABS))
+        uplifted[index] += uplift
+
+    return uplifted
+
+
 def apply_prediction_postprocess(
     y_pred_real: np.ndarray,
     validation_bias: float = 0.0,
     slot_indices: np.ndarray | None = None,
     slot_bias_adjustments: dict[int, float] | None = None,
+    late_slot_reference_values: np.ndarray | None = None,
+    late_slot_uplift_factors: dict[int, float] | None = None,
 ) -> np.ndarray:
     adjusted = np.asarray(y_pred_real, dtype=float).copy()
     adjusted = adjusted - compute_effective_bias_adjustment(validation_bias)
@@ -161,6 +287,12 @@ def apply_prediction_postprocess(
         for index in range(aligned_n):
             adjusted[index] += float(slot_bias_adjustments.get(int(slot_indices[index]), 0.0))
 
+    adjusted = apply_late_slot_uplift(
+        adjusted=adjusted,
+        slot_indices=slot_indices,
+        late_slot_reference_values=late_slot_reference_values,
+        late_slot_uplift_factors=late_slot_uplift_factors,
+    )
     return np.maximum(adjusted, 0.0)
 
 
@@ -526,7 +658,7 @@ def main(channel: str):
 
     dataset = df[feature_columns].copy()
     target = np.log1p(df[["volume"]].copy())
-    calibration_meta = df[["slot_index"]].copy()
+    calibration_meta = df[["slot_index", "lag_volume_1_day", "same_slot_mean_3_day", "same_slot_mean_7_day"]].copy()
 
     split_index = int(len(dataset) * TRAIN_SPLIT)
     train_features = dataset.iloc[:split_index].copy()
@@ -585,6 +717,15 @@ def main(channel: str):
     train_meta_df = train_meta_base.iloc[time_steps:].copy().reset_index(drop=True)
     val_meta_df = train_meta_df.iloc[-len(y_val_inv):].copy().reset_index(drop=True)
     val_slot_indices = val_meta_df["slot_index"].astype(int).values if not val_meta_df.empty else np.array([], dtype=int)
+    val_late_slot_reference_values = (
+        build_late_slot_reference_values(
+            val_meta_df["lag_volume_1_day"].values,
+            val_meta_df["same_slot_mean_3_day"].values,
+            val_meta_df["same_slot_mean_7_day"].values,
+        )
+        if not val_meta_df.empty
+        else np.array([], dtype=float)
+    )
 
     y_val_pred_after_global_bias = apply_prediction_postprocess(
         y_val_pred_inv,
@@ -596,11 +737,26 @@ def main(channel: str):
         y_pred_after_global_bias=y_val_pred_after_global_bias,
         slots_per_day=slots_per_day,
     )
+    y_val_pred_after_slot_bias = apply_prediction_postprocess(
+        y_val_pred_inv,
+        validation_bias=validation_bias,
+        slot_indices=val_slot_indices,
+        slot_bias_adjustments=slot_bias_adjustments,
+    )
+    late_slot_uplift_factors = build_late_slot_uplift_factors(
+        slot_indices=val_slot_indices,
+        y_true=y_val_inv,
+        y_pred_after_slot_bias=y_val_pred_after_slot_bias,
+        late_slot_reference_values=val_late_slot_reference_values,
+        slots_per_day=slots_per_day,
+    )
     y_val_pred_post = apply_prediction_postprocess(
         y_val_pred_inv,
         validation_bias=validation_bias,
         slot_indices=val_slot_indices,
         slot_bias_adjustments=slot_bias_adjustments,
+        late_slot_reference_values=val_late_slot_reference_values,
+        late_slot_uplift_factors=late_slot_uplift_factors,
     )
 
     y_pred_scaled = model.predict(X_test, verbose=0).flatten()
@@ -609,11 +765,22 @@ def main(channel: str):
 
     test_meta_df = test_meta_base.iloc[time_steps:].copy().reset_index(drop=True)
     test_slot_indices = test_meta_df["slot_index"].astype(int).values if not test_meta_df.empty else np.array([], dtype=int)
+    test_late_slot_reference_values = (
+        build_late_slot_reference_values(
+            test_meta_df["lag_volume_1_day"].values,
+            test_meta_df["same_slot_mean_3_day"].values,
+            test_meta_df["same_slot_mean_7_day"].values,
+        )
+        if not test_meta_df.empty
+        else np.array([], dtype=float)
+    )
     y_pred_inv = apply_prediction_postprocess(
         y_pred_inv,
         validation_bias=validation_bias,
         slot_indices=test_slot_indices,
         slot_bias_adjustments=slot_bias_adjustments,
+        late_slot_reference_values=test_late_slot_reference_values,
+        late_slot_uplift_factors=late_slot_uplift_factors,
     )
 
     mae = float(mean_absolute_error(y_test_inv, y_pred_inv))
@@ -639,7 +806,7 @@ def main(channel: str):
     }
 
     best_val_loss = min(history.history.get("val_loss", []) or [0.0])
-    model_version = f"lstm_{slugify_channel(canonical_channel)}_v4_feature_pruned_calibrated"
+    model_version = f"lstm_{slugify_channel(canonical_channel)}_v4_1_feature_pruned_late_uplift"
 
     metadata = {
         "channel": canonical_channel,
@@ -659,12 +826,18 @@ def main(channel: str):
         "bias_correction_factor": float(BIAS_CORRECTION_FACTOR),
         "negative_bias_correction_factor": float(NEGATIVE_BIAS_CORRECTION_FACTOR),
         "slot_bias_adjustments": {str(k): float(v) for k, v in slot_bias_adjustments.items()},
+        "late_slot_uplift_factors": {str(k): float(v) for k, v in late_slot_uplift_factors.items()},
         "slot_bias_adjustment_shrink": float(SLOT_BIAS_ADJUSTMENT_SHRINK),
         "slot_bias_adjustment_late_multiplier": float(SLOT_BIAS_ADJUSTMENT_LATE_MULTIPLIER),
         "late_slot_window": int(LATE_SLOT_WINDOW),
+        "late_slot_reference_gap_min": float(LATE_SLOT_REFERENCE_GAP_MIN),
+        "late_slot_uplift_max_abs": float(LATE_SLOT_UPLIFT_MAX_ABS),
+        "late_slot_alpha_shrink": float(LATE_SLOT_ALPHA_SHRINK),
+        "late_slot_alpha_max": float(LATE_SLOT_ALPHA_MAX),
+        "slot31_alpha_multiplier": float(SLOT31_ALPHA_MULTIPLIER),
         "baseline_name": "naive_previous_operational_day",
         "feature_set_version": "v3_feature_pruned_calibrated",
-        "postprocess_version": "v1_bias_slot_calibration",
+        "postprocess_version": "v2_bias_slot_late_uplift",
     }
 
     metrics = {
@@ -683,10 +856,11 @@ def main(channel: str):
         "slots_per_day": int(slots_per_day),
         "model_version": model_version,
         "feature_set_version": "v3_feature_pruned_calibrated",
-        "postprocess_version": "v1_bias_slot_calibration",
+        "postprocess_version": "v2_bias_slot_late_uplift",
         "baseline_name": "naive_previous_operational_day",
         "baseline_metrics": baseline_metrics,
         "calibration_slots": len(slot_bias_adjustments),
+        "late_uplift_slots": len(late_slot_uplift_factors),
         "effective_bias_adjustment": round(float(compute_effective_bias_adjustment(validation_bias)), 4),
     }
 
