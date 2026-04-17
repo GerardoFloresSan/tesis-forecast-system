@@ -29,3 +29,31 @@ class ForecastRunResponse(BaseModel):
     predicted_value: float
     model_version: str | None = None
     created_at: datetime
+
+
+class ForecastIntervalResponse(BaseModel):
+    id: int
+    forecast_run_id: int
+    channel: str
+    forecast_date: date
+    forecast_datetime: datetime
+    interval_time: time
+    slot_index: int
+    shift_label: str
+    predicted_value: float
+    model_version: str | None = None
+    created_at: datetime
+
+
+class ForecastBatchResponse(BaseModel):
+    id: int
+    channel: str
+    forecast_date: date
+    forecast_start_datetime: datetime
+    total_predicted_value: float
+    intervals_generated: int
+    model_version: str | None = None
+    created_at: datetime
+    operation: str
+    message: str
+    intervals: list[ForecastIntervalResponse]

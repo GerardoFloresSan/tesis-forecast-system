@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from pathlib import Path
 
 import joblib
@@ -13,6 +14,9 @@ from app.utils.channel_rules import (
     apply_business_hours_filter,
     canonicalize_channel,
     get_next_operational_datetime,
+    get_next_operational_day_date,
+    get_operational_day_datetimes,
+    get_operational_day_start_datetime,
     get_shift_label,
     get_slots_per_day,
     slugify_channel,
@@ -77,6 +81,80 @@ def _normalize_external_variables(df: pd.DataFrame) -> pd.DataFrame:
     return normalized
 
 
+def _default_external_variables() -> dict[str, float]:
+    return {
+        "is_holiday_peru": 0.0,
+        "is_holiday_spain": 0.0,
+        "is_holiday_mexico": 0.0,
+        "campaign_day": 0.0,
+        "absenteeism_rate": 0.0,
+        "is_holiday_any": 0.0,
+    }
+
+
+def _build_external_variables_by_date(db: Session) -> dict[date, dict[str, float]]:
+    rows = db.query(ExternalVariable).order_by(ExternalVariable.variable_date.asc(), ExternalVariable.id.asc()).all()
+    if not rows:
+        return {}
+
+    ext_df = pd.DataFrame(
+        [
+            {
+                "variable_date": row.variable_date,
+                "variable_type": row.variable_type,
+                "variable_value": row.variable_value,
+            }
+            for row in rows
+        ]
+    )
+    ext_df = _normalize_external_variables(ext_df)
+
+    if ext_df.empty:
+        return {}
+
+    ext_df = ext_df[
+        ext_df["variable_type"].isin(
+            [
+                "is_holiday_peru",
+                "is_holiday_spain",
+                "is_holiday_mexico",
+                "campaign_day",
+                "absenteeism_rate",
+            ]
+        )
+    ].copy()
+
+    if ext_df.empty:
+        return {}
+
+    pivot = (
+        ext_df.pivot_table(
+            index="variable_date",
+            columns="variable_type",
+            values="variable_value",
+            aggfunc="max",
+            fill_value=0.0,
+        )
+        .reset_index()
+        .rename(columns={"variable_date": "interaction_date"})
+    )
+
+    result: dict[date, dict[str, float]] = {}
+    for row in pivot.to_dict(orient="records"):
+        interaction_date = row.pop("interaction_date")
+        values = _default_external_variables()
+        for key, value in row.items():
+            values[key] = float(value or 0.0)
+        values["is_holiday_any"] = max(
+            values["is_holiday_peru"],
+            values["is_holiday_spain"],
+            values["is_holiday_mexico"],
+        )
+        result[interaction_date] = values
+
+    return result
+
+
 def _prepare_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
     rows = (
         db.query(HistoricalInteraction)
@@ -107,67 +185,18 @@ def _prepare_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
     base_df = apply_business_hours_filter(base_df, channel)
     base_df = base_df.sort_values("datetime").reset_index(drop=True)
 
-    ext_rows = db.query(ExternalVariable).order_by(ExternalVariable.variable_date.asc()).all()
-    ext_df = pd.DataFrame(
-        [
-            {
-                "variable_date": row.variable_date,
-                "variable_type": row.variable_type,
-                "variable_value": row.variable_value,
-            }
-            for row in ext_rows
-        ]
-    )
-    ext_df = _normalize_external_variables(ext_df)
-
-    external_features = pd.DataFrame(
-        {"interaction_date": base_df["interaction_date"].drop_duplicates().sort_values()}
-    )
-    if not ext_df.empty:
-        ext_df = ext_df[
-            ext_df["variable_type"].isin(
-                [
-                    "is_holiday_peru",
-                    "is_holiday_spain",
-                    "is_holiday_mexico",
-                    "campaign_day",
-                    "absenteeism_rate",
-                ]
-            )
-        ].copy()
-        if not ext_df.empty:
-            pivot = (
-                ext_df.pivot_table(
-                    index="variable_date",
-                    columns="variable_type",
-                    values="variable_value",
-                    aggfunc="max",
-                    fill_value=0.0,
-                )
-                .reset_index()
-                .rename(columns={"variable_date": "interaction_date"})
-            )
-            external_features = external_features.merge(pivot, on="interaction_date", how="left")
-
+    external_by_date = _build_external_variables_by_date(db)
     for column in [
         "is_holiday_peru",
         "is_holiday_spain",
         "is_holiday_mexico",
         "campaign_day",
         "absenteeism_rate",
+        "is_holiday_any",
     ]:
-        if column not in external_features.columns:
-            external_features[column] = 0.0
-
-    external_features["is_holiday_any"] = external_features[
-        ["is_holiday_peru", "is_holiday_spain", "is_holiday_mexico"]
-    ].max(axis=1)
-
-    df = base_df.merge(external_features, on="interaction_date", how="left")
-    df["datetime"] = pd.to_datetime(
-        df["interaction_date"].astype(str) + " " + df["interval_time"].astype(str)
-    )
-    df = df.sort_values("datetime").reset_index(drop=True)
+        base_df[column] = base_df["interaction_date"].apply(
+            lambda current_date: float(external_by_date.get(current_date, _default_external_variables()).get(column, 0.0))
+        )
 
     for column in [
         "volume",
@@ -179,9 +208,9 @@ def _prepare_channel_dataframe(db: Session, channel: str) -> pd.DataFrame:
         "campaign_day",
         "absenteeism_rate",
     ]:
-        df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0.0)
+        base_df[column] = pd.to_numeric(base_df[column], errors="coerce").fillna(0.0)
 
-    return df
+    return base_df
 
 
 def _add_features(df: pd.DataFrame, channel: str) -> pd.DataFrame:
@@ -247,7 +276,44 @@ def _prepare_recent_sequence(df: pd.DataFrame, metadata: dict, x_scaler) -> np.n
     return np.array([sequence], dtype=np.float32)
 
 
-def predict_next_volume_for_channel(db: Session, channel: str) -> dict:
+def _predict_next_value(model, y_scaler, metadata: dict, feature_df: pd.DataFrame, x_scaler) -> float:
+    X_input = _prepare_recent_sequence(feature_df, metadata, x_scaler)
+    y_pred_scaled = model.predict(X_input, verbose=0).flatten()
+    y_pred_real = _inverse_target_transform(y_pred_scaled, y_scaler)
+
+    validation_bias = float(metadata.get("validation_bias", 0.0))
+    bias_correction_factor = float(metadata.get("bias_correction_factor", 0.0))
+    return float(np.maximum(y_pred_real[0] - (validation_bias * bias_correction_factor), 0.0))
+
+
+def _build_aht_profile(base_df: pd.DataFrame, channel: str) -> dict:
+    if base_df.empty:
+        raise ValueError(f"No hay base histórica suficiente para construir el perfil de AHT del canal '{channel}'.")
+
+    slots_per_day = get_slots_per_day(channel)
+    profile_df = base_df.copy()
+    profile_df["slot_index"] = profile_df.groupby(profile_df["datetime"].dt.date).cumcount()
+
+    per_slot = (
+        profile_df.groupby("slot_index", as_index=False)["aht"]
+        .median()
+        .sort_values("slot_index")
+    )
+
+    overall_aht = float(profile_df["aht"].median()) if not profile_df["aht"].empty else 0.0
+    if np.isnan(overall_aht):
+        overall_aht = 0.0
+
+    profile = {int(row["slot_index"]): float(row["aht"] or 0.0) for _, row in per_slot.iterrows()}
+
+    last_known_aht = float(profile_df["aht"].iloc[-1] or 0.0)
+    for slot_index in range(slots_per_day):
+        profile.setdefault(slot_index, overall_aht if overall_aht > 0 else last_known_aht)
+
+    return profile
+
+
+def predict_next_operational_day_for_channel(db: Session, channel: str) -> dict:
     canonical_channel = canonicalize_channel(channel)
     model, scaler_bundle, metadata = load_lstm_artifacts(canonical_channel)
 
@@ -256,21 +322,84 @@ def predict_next_volume_for_channel(db: Session, channel: str) -> dict:
 
     base_df = _prepare_channel_dataframe(db, canonical_channel)
     feature_df = _add_features(base_df, canonical_channel)
-    X_input = _prepare_recent_sequence(feature_df, metadata, x_scaler)
 
-    y_pred_scaled = model.predict(X_input, verbose=0).flatten()
-    y_pred_real = _inverse_target_transform(y_pred_scaled, y_scaler)
-
-    validation_bias = float(metadata.get("validation_bias", 0.0))
-    bias_correction_factor = float(metadata.get("bias_correction_factor", 0.0))
-    predicted_value = float(np.maximum(y_pred_real[0] - (validation_bias * bias_correction_factor), 0.0))
+    external_by_date = _build_external_variables_by_date(db)
+    aht_profile = _build_aht_profile(base_df, canonical_channel)
 
     last_datetime = base_df["datetime"].max().to_pydatetime()
-    next_datetime = get_next_operational_datetime(last_datetime, canonical_channel)
+    forecast_date = get_next_operational_day_date(last_datetime, canonical_channel)
+    forecast_slots = get_operational_day_datetimes(forecast_date, canonical_channel)
+    forecast_start_datetime = get_operational_day_start_datetime(forecast_date, canonical_channel)
+    external_vars = external_by_date.get(forecast_date, _default_external_variables())
+    model_version = metadata.get("model_version", "lstm_v2_operational")
+
+    intervals: list[dict] = []
+    recursive_base_df = base_df.copy()
+    recursive_feature_df = feature_df.copy()
+
+    for slot_index, slot_datetime in enumerate(forecast_slots):
+        predicted_value = _predict_next_value(
+            model=model,
+            y_scaler=y_scaler,
+            metadata=metadata,
+            feature_df=recursive_feature_df,
+            x_scaler=x_scaler,
+        )
+
+        minute_of_day = slot_datetime.hour * 60 + slot_datetime.minute
+        shift_label = get_shift_label(canonical_channel, minute_of_day)
+
+        interval_payload = {
+            "channel": canonical_channel,
+            "forecast_date": forecast_date,
+            "forecast_datetime": slot_datetime,
+            "interval_time": slot_datetime.time(),
+            "slot_index": slot_index,
+            "shift_label": shift_label,
+            "predicted_value": predicted_value,
+            "model_version": model_version,
+        }
+        intervals.append(interval_payload)
+
+        new_row = {
+            "interaction_date": forecast_date,
+            "interval_time": slot_datetime.time(),
+            "channel": canonical_channel,
+            "volume": predicted_value,
+            "aht": float(aht_profile.get(slot_index, 0.0)),
+            "datetime": slot_datetime,
+            "is_holiday_peru": float(external_vars.get("is_holiday_peru", 0.0)),
+            "is_holiday_spain": float(external_vars.get("is_holiday_spain", 0.0)),
+            "is_holiday_mexico": float(external_vars.get("is_holiday_mexico", 0.0)),
+            "campaign_day": float(external_vars.get("campaign_day", 0.0)),
+            "absenteeism_rate": float(external_vars.get("absenteeism_rate", 0.0)),
+            "is_holiday_any": float(external_vars.get("is_holiday_any", 0.0)),
+        }
+
+        recursive_base_df = pd.concat([recursive_base_df, pd.DataFrame([new_row])], ignore_index=True)
+        recursive_base_df = recursive_base_df.sort_values("datetime").reset_index(drop=True)
+        recursive_feature_df = _add_features(recursive_base_df, canonical_channel)
+
+    total_predicted_value = float(sum(item["predicted_value"] for item in intervals))
 
     return {
         "channel": canonical_channel,
-        "forecast_date": next_datetime,
-        "predicted_value": predicted_value,
-        "model_version": metadata.get("model_version", "lstm_v2_operational"),
+        "forecast_date": forecast_date,
+        "forecast_start_datetime": forecast_start_datetime,
+        "total_predicted_value": total_predicted_value,
+        "intervals_generated": len(intervals),
+        "intervals": intervals,
+        "model_version": model_version,
+    }
+
+
+def predict_next_volume_for_channel(db: Session, channel: str) -> dict:
+    batch_prediction = predict_next_operational_day_for_channel(db, channel)
+    first_interval = batch_prediction["intervals"][0]
+
+    return {
+        "channel": batch_prediction["channel"],
+        "forecast_date": first_interval["forecast_datetime"],
+        "predicted_value": first_interval["predicted_value"],
+        "model_version": batch_prediction["model_version"],
     }

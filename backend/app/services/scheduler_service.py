@@ -114,7 +114,10 @@ def run_auto_forecast_job():
             channel=settings.AUTO_FORECAST_CHANNEL,
             status="success",
             action_taken=action_taken,
-            message=f"Forecast {result['operation']} con id={result['id']} y valor={result['predicted_value']}",
+            message=(
+                f"Forecast {result['operation']} con id={result['id']} y "
+                f"total={result['total_predicted_value']} en {result['intervals_generated']} slots"
+            ),
             started_at=started_at,
             finished_at=finished_at,
         )
