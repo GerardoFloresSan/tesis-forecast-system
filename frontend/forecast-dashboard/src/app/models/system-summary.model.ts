@@ -82,6 +82,34 @@ export interface ForecastHistoryItem {
   created_at: string;
 }
 
+export interface ForecastIntervalHistoryItem {
+  id: number;
+  forecast_run_id: number;
+  channel: string;
+  forecast_date: string;
+  forecast_datetime: string;
+  interval_time: string;
+  slot_index: number;
+  shift_label: string;
+  predicted_value: number;
+  model_version: string | null;
+  created_at: string;
+}
+
+export interface ForecastBatchResponse {
+  id: number;
+  channel: string;
+  forecast_date: string;
+  forecast_start_datetime: string;
+  total_predicted_value: number;
+  intervals_generated: number;
+  model_version: string | null;
+  created_at: string;
+  operation: string;
+  message: string;
+  intervals: ForecastIntervalHistoryItem[];
+}
+
 export interface LstmHistoryItem {
   id: number;
   channel: string;

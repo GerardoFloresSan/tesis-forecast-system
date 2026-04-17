@@ -1,7 +1,10 @@
 import { inject, Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { ForecastHistoryItem } from '../models/system-summary.model';
+import {
+  ForecastHistoryItem,
+  ForecastIntervalHistoryItem
+} from '../models/system-summary.model';
 import { environment } from '../../environments/environment';
 
 @Injectable({
@@ -9,11 +12,30 @@ import { environment } from '../../environments/environment';
 })
 export class ForecastHistoryService {
   private readonly http = inject(HttpClient);
-  private readonly apiUrl = `${environment.apiUrl}/forecast/history`;
+  private readonly historyUrl = `${environment.apiUrl}/forecast/history`;
+  private readonly intervalHistoryUrl = `${environment.apiUrl}/forecast/history/intervals`;
 
   getHistory(channel: string = 'Choice', limit: number = 10): Observable<ForecastHistoryItem[]> {
-    return this.http.get<ForecastHistoryItem[]>(
-      `${this.apiUrl}?channel=${channel}&limit=${limit}`
-    );
+    const params = new HttpParams()
+      .set('channel', channel)
+      .set('limit', limit);
+
+    return this.http.get<ForecastHistoryItem[]>(this.historyUrl, { params });
+  }
+
+  getIntervalHistory(
+    channel: string = 'Choice',
+    forecastDate?: string | null,
+    limit: number = 2000
+  ): Observable<ForecastIntervalHistoryItem[]> {
+    let params = new HttpParams()
+      .set('channel', channel)
+      .set('limit', limit);
+
+    if (forecastDate) {
+      params = params.set('forecast_date', forecastDate);
+    }
+
+    return this.http.get<ForecastIntervalHistoryItem[]>(this.intervalHistoryUrl, { params });
   }
 }
