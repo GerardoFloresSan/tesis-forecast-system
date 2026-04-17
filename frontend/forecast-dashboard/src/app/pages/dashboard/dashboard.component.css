@@ -871,3 +871,238 @@
   .chart-card-header { flex-direction: column; align-items: flex-start; gap: 10px; }
   .chart-stats { flex-wrap: wrap; gap: 12px; }
 }
+
+/* ── Bloque 9: forecast operativo por intervalos ── */
+.operational-summary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.summary-mini-card {
+  min-height: 170px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.summary-mini-card h3 {
+  margin: 0 0 10px;
+  font-size: 28px;
+  line-height: 1.05;
+}
+
+.summary-mini-card-purple {
+  background: linear-gradient(180deg, rgba(245, 243, 255, 0.96), rgba(255, 255, 255, 0.98));
+}
+
+.summary-mini-card-blue {
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.96), rgba(255, 255, 255, 0.98));
+}
+
+.summary-mini-card-teal {
+  background: linear-gradient(180deg, rgba(240, 253, 250, 0.96), rgba(255, 255, 255, 0.98));
+}
+
+.summary-mini-card-slate {
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 0.98));
+}
+
+.model-version-value {
+  font-size: 20px !important;
+  line-height: 1.35 !important;
+  word-break: break-word;
+}
+
+.activity-cards-grid-forecast {
+  grid-template-columns: 1.5fr 1fr;
+}
+
+.interval-chart-card {
+  min-height: 420px;
+}
+
+.chart-card-header-stack {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.chart-container-intervals {
+  overflow-x: auto;
+}
+
+.history-card-clean {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(203, 213, 225, 0.75);
+  border-radius: 22px;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.history-header-tight {
+  margin-bottom: 18px;
+}
+
+.history-header h3 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #0f172a;
+}
+
+.history-subtitle {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.history-chip-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.section-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 11px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.section-chip-purple { background: #ede9fe; color: #7c3aed; }
+.section-chip-slate  { background: #e2e8f0; color: #334155; }
+
+.table-wrapper {
+  overflow-x: auto;
+  border-radius: 16px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 900px;
+}
+
+.data-table-intervals {
+  min-width: 1100px;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 13px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 14px;
+  vertical-align: top;
+}
+
+.data-table th {
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.data-table tbody tr:hover { background: #f8fbff; }
+.data-table tbody tr:last-child td { border-bottom: none; }
+
+.clickable-row {
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.selected-row {
+  background: #f5f3ff !important;
+}
+
+.value-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 76px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.value-pill-purple { background: #ede9fe; color: #7c3aed; }
+
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 86px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.tag-pill-morning {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.tag-pill-afternoon {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.empty-row {
+  text-align: center;
+  color: #64748b;
+  font-style: italic;
+}
+
+.empty-state-card {
+  padding: 18px;
+  border-radius: 14px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  color: #64748b;
+  font-size: 14px;
+  text-align: center;
+}
+
+@media (max-width: 1200px) {
+  .operational-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .activity-cards-grid-forecast {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .operational-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .history-header,
+  .history-chip-stack {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

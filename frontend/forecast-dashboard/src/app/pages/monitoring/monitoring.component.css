@@ -499,3 +499,126 @@
 
   .mape-chart-section { padding: 12px 14px; }
 }
+
+/* ── Bloque 9: detalle operativo por intervalos ── */
+.monitoring-summary-grid-extended {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.summary-card-intervals::before { background: linear-gradient(90deg, #0f766e, #2dd4bf); }
+.summary-card-total::before     { background: linear-gradient(90deg, #2563eb, #60a5fa); }
+.summary-badge-teal            { background: #ccfbf1; color: #0f766e; }
+
+.meta-chip-soft {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.interval-detail-card::before {
+  background: linear-gradient(90deg, #0f766e, #2dd4bf);
+}
+
+.section-chip-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.section-chip-slate {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.interval-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.interval-summary-item {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.interval-summary-item span {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.interval-summary-item strong {
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.inline-state-box {
+  margin-bottom: 16px;
+}
+
+.clickable-row {
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.selected-row {
+  background: #f5f3ff !important;
+}
+
+.data-table-intervals {
+  min-width: 1100px;
+}
+
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 86px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.tag-pill-morning {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.tag-pill-afternoon {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+@media (max-width: 1200px) {
+  .monitoring-summary-grid-extended {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1000px) {
+  .section-chip-stack {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .interval-summary-strip {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .monitoring-summary-grid-extended {
+    grid-template-columns: 1fr;
+  }
+}

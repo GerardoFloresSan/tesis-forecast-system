@@ -3,6 +3,7 @@ import { Component, OnInit, inject } from '@angular/core';
 import { finalize, forkJoin } from 'rxjs';
 import {
   ForecastHistoryItem,
+  ForecastIntervalHistoryItem,
   LstmHistoryItem,
   SchedulerJobHistoryItem
 } from '../../models/system-summary.model';
@@ -12,7 +13,6 @@ import { SchedulerJobHistoryService } from '../../services/scheduler-job-history
 import { ChannelService } from '../../services/channel.service';
 import { LimaDateTimePipe } from '../../shared/pipes/lima-datetime.pipe';
 
-// Tipos locales para el gráfico de MAPE
 interface MapeBar {
   x: number;
   y: number;
@@ -53,12 +53,17 @@ export class MonitoringComponent implements OnInit {
   channel = 'Choice';
 
   forecastHistory: ForecastHistoryItem[] = [];
+  forecastIntervals: ForecastIntervalHistoryItem[] = [];
   modelHistory: LstmHistoryItem[] = [];
   schedulerHistory: SchedulerJobHistoryItem[] = [];
 
   loading = false;
+  intervalLoading = false;
   errorMessage = '';
+  intervalError = '';
   lastRefreshAt: Date | null = null;
+  selectedForecastDate = '';
+  selectedForecastRunId: number | null = null;
 
   ngOnInit(): void {
     this.loadChannels();
@@ -75,7 +80,7 @@ export class MonitoringComponent implements OnInit {
       },
       error: (error) => {
         console.error(error);
-        this.availableChannels = ['Choice'];
+        this.availableChannels = ['Choice', 'España'];
         this.loadMonitoring();
       }
     });
@@ -87,17 +92,37 @@ export class MonitoringComponent implements OnInit {
 
     forkJoin({
       forecastHistory: this.forecastHistoryService.getHistory(this.channel, 20),
-      modelHistory:    this.modelHistoryService.getHistory(this.channel, 30),
+      modelHistory: this.modelHistoryService.getHistory(this.channel, 30),
       schedulerHistory: this.schedulerJobHistoryService.getHistory(30)
     })
       .pipe(finalize(() => (this.loading = false)))
       .subscribe({
         next: (response) => {
           this.forecastHistory = response.forecastHistory;
-          this.modelHistory    = response.modelHistory;
+          this.modelHistory = response.modelHistory;
           this.schedulerHistory = response.schedulerHistory.filter(
-            item => !item.channel || item.channel === this.channel
+            (item) => !item.channel || item.channel === this.channel
           );
+
+          const availableDates = this.forecastHistory
+            .map((item) => this.extractDateOnly(item.forecast_date))
+            .filter((value): value is string => !!value);
+
+          const preferredDate = this.selectedForecastDate && availableDates.includes(this.selectedForecastDate)
+            ? this.selectedForecastDate
+            : availableDates[0] ?? '';
+
+          this.selectedForecastDate = preferredDate;
+          this.selectedForecastRunId = this.forecastHistory.find(
+            (item) => this.extractDateOnly(item.forecast_date) === preferredDate
+          )?.id ?? null;
+
+          if (preferredDate) {
+            this.loadIntervalHistory(preferredDate);
+          } else {
+            this.forecastIntervals = [];
+          }
+
           this.lastRefreshAt = new Date();
         },
         error: (error) => {
@@ -107,10 +132,60 @@ export class MonitoringComponent implements OnInit {
       });
   }
 
+  loadIntervalHistory(forecastDate: string): void {
+    this.intervalLoading = true;
+    this.intervalError = '';
+
+    this.forecastHistoryService
+      .getIntervalHistory(this.channel, forecastDate, 2000)
+      .pipe(finalize(() => (this.intervalLoading = false)))
+      .subscribe({
+        next: (items) => {
+          this.forecastIntervals = items.sort((a, b) => a.slot_index - b.slot_index);
+        },
+        error: (error) => {
+          console.error(error);
+          this.forecastIntervals = [];
+          this.intervalError = 'No se pudo cargar el detalle operativo por intervalos.';
+        }
+      });
+  }
+
   onChannelChange(event: Event): void {
     const value = (event.target as HTMLSelectElement).value;
     this.channel = value;
+    this.selectedForecastDate = '';
+    this.selectedForecastRunId = null;
     this.loadMonitoring();
+  }
+
+  selectForecastRun(item: ForecastHistoryItem): void {
+    const forecastDate = this.extractDateOnly(item.forecast_date);
+    if (!forecastDate) {
+      return;
+    }
+
+    this.selectedForecastDate = forecastDate;
+    this.selectedForecastRunId = item.id;
+    this.loadIntervalHistory(forecastDate);
+  }
+
+  get selectedForecastDateLabel(): string {
+    return this.formatDateOnly(this.selectedForecastDate);
+  }
+
+  get intervalDailyTotal(): number {
+    return this.forecastIntervals.reduce((sum, item) => sum + item.predicted_value, 0);
+  }
+
+  get peakInterval(): ForecastIntervalHistoryItem | null {
+    if (!this.forecastIntervals.length) {
+      return null;
+    }
+
+    return this.forecastIntervals.reduce((peak, item) => (
+      item.predicted_value > peak.predicted_value ? item : peak
+    ));
   }
 
   getStatusClass(status: string | null | undefined): string {
@@ -122,70 +197,103 @@ export class MonitoringComponent implements OnInit {
     return '';
   }
 
-  // ──────────────────────────────────────────────────────────
-  // Gráfico de barras MAPE por corrida del modelo (SVG nativo)
-  // viewBox="0 0 600 160"  PAD_L=48 PAD_R=24 PAD_T=14 PAD_B=32
-  // plotW=528  plotH=114  bottom=128
-  // ──────────────────────────────────────────────────────────
+  getShiftLabel(label: string | null | undefined): string {
+    const value = (label || '').toLowerCase();
+    if (value === 'morning') return 'Mañana';
+    if (value === 'afternoon') return 'Tarde';
+    return label || '-';
+  }
+
+  isSelectedForecastRun(item: ForecastHistoryItem): boolean {
+    return item.id === this.selectedForecastRunId;
+  }
+
   get mapeChartData(): MapeChartData {
     const PAD_L = 48, PAD_R = 24, PAD_T = 14, PAD_B = 32;
     const W = 600, H = 160;
-    const plotW = W - PAD_L - PAD_R;  // 528
-    const plotH = H - PAD_T - PAD_B;  // 114
-    const bottom = PAD_T + plotH;      // 128
+    const plotW = W - PAD_L - PAD_R;
+    const plotH = H - PAD_T - PAD_B;
+    const bottom = PAD_T + plotH;
 
     const empty: MapeChartData = { bars: [], hasData: false, thresholdY: 0, gridLines: [], bottom };
 
-    // Corridas con MAPE registrado, ordenadas cronológicamente, últimas 15
     const items = [...this.modelHistory]
-      .filter(i => i.mape != null)
+      .filter((item) => item.mape != null)
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
       .slice(-15);
 
     if (items.length === 0) return empty;
 
-    const mapes  = items.map(i => i.mape as number);
-    const maxMape = Math.max(...mapes, 22); // mínimo 22 % de techo visual
+    const mapes = items.map((item) => item.mape as number);
+    const maxMape = Math.max(...mapes, 22);
     const minMape = 0;
 
-    const toY = (v: number) =>
-      PAD_T + (1 - (v - minMape) / (maxMape - minMape)) * plotH;
+    const toY = (value: number) =>
+      PAD_T + (1 - (value - minMape) / (maxMape - minMape)) * plotH;
 
     const barSpacing = plotW / items.length;
-    const barW = barSpacing * 0.55;
+    const barWidth = barSpacing * 0.55;
 
-    const bars: MapeBar[] = items.map((item, i) => {
-      const mapeVal = item.mape as number;
-      const x   = PAD_L + i * barSpacing + (barSpacing - barW) / 2;
-      const y   = toY(mapeVal);
-      const barH = bottom - y;
+    const bars: MapeBar[] = items.map((item, index) => {
+      const mapeValue = item.mape as number;
+      const x = PAD_L + index * barSpacing + (barSpacing - barWidth) / 2;
+      const y = toY(mapeValue);
+      const height = bottom - y;
 
       let color: string;
-      if      (mapeVal < 10) color = '#15803d';
-      else if (mapeVal < 15) color = '#2563eb';
-      else if (mapeVal < 20) color = '#b45309';
-      else                   color = '#b91c1c';
+      if (mapeValue < 10) color = '#15803d';
+      else if (mapeValue < 15) color = '#2563eb';
+      else if (mapeValue < 20) color = '#b45309';
+      else color = '#b91c1c';
 
-      // Mostrar etiqueta de fecha en máximo 8 barras visibles
       const maxLabels = 8;
       const step = Math.max(1, Math.ceil(items.length / maxLabels));
-      const showLabel = i % step === 0 || i === items.length - 1;
+      const showLabel = index % step === 0 || index === items.length - 1;
 
       return {
-        x: +x.toFixed(1), y: +y.toFixed(1),
-        width: +barW.toFixed(1), height: +barH.toFixed(1),
-        value: mapeVal,
-        label: item.created_at.slice(5, 10), // MM-DD
-        color, showLabel
+        x: +x.toFixed(1),
+        y: +y.toFixed(1),
+        width: +barWidth.toFixed(1),
+        height: +height.toFixed(1),
+        value: mapeValue,
+        label: item.created_at.slice(5, 10),
+        color,
+        showLabel
       };
     });
 
     const thresholdY = +toY(15).toFixed(1);
 
     const gridLines: GridLine[] = [0, 10, 20]
-      .filter(v => v <= maxMape + 2)
-      .map(v => ({ y: +toY(v).toFixed(1), label: `${v}%` }));
+      .filter((value) => value <= maxMape + 2)
+      .map((value) => ({ y: +toY(value).toFixed(1), label: `${value}%` }));
 
     return { bars, hasData: true, thresholdY, gridLines, bottom };
+  }
+
+  private extractDateOnly(value: string | null | undefined): string | null {
+    if (!value) {
+      return null;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return value;
+    }
+
+    const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+    return match ? match[1] : null;
+  }
+
+  private formatDateOnly(value: string | null | undefined): string {
+    if (!value) {
+      return '-';
+    }
+
+    const parts = value.split('-');
+    if (parts.length !== 3) {
+      return value;
+    }
+
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
   }
 }

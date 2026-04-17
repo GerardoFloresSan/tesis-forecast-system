@@ -2,12 +2,11 @@
   <section class="hero monitoring-hero">
     <div>
       <h2>Monitoreo y trazabilidad</h2>
-      <p>Seguimiento de forecasts, corridas del modelo y logs del scheduler en hora Lima, Perú.</p>
+      <p>Seguimiento de forecasts, corridas del modelo y detalle operativo por intervalos en hora Lima, Perú.</p>
     </div>
     <button class="refresh-btn" (click)="loadMonitoring()">Actualizar</button>
   </section>
 
-  <!-- ── Barra de herramientas ── -->
   <section class="toolbar monitoring-toolbar">
     <div class="toolbar-left">
       <div class="channel-selector">
@@ -24,6 +23,10 @@
       <div class="meta-chip">
         <span class="meta-chip-label">Canal actual</span>
         <strong>{{ channel }}</strong>
+      </div>
+      <div class="meta-chip meta-chip-soft">
+        <span class="meta-chip-label">Fecha operativa</span>
+        <strong>{{ selectedForecastDateLabel }}</strong>
       </div>
       @if (lastRefreshAt) {
         <div class="meta-info">
@@ -43,26 +46,32 @@
   }
 
   @if (!loading) {
-
-    <!-- ── Mini-tarjetas de resumen ── -->
-    <section class="monitoring-summary-grid">
-
+    <section class="monitoring-summary-grid monitoring-summary-grid-extended">
       <article class="mini-card summary-card summary-card-forecast">
         <div class="summary-top">
           <span class="summary-badge summary-badge-purple">Forecasts</span>
         </div>
         <h3>Forecasts recientes</h3>
         <p>{{ forecastHistory.length }}</p>
-        <span class="summary-note">Pronósticos generados para el canal seleccionado.</span>
+        <span class="summary-note">Cabeceras diarias disponibles para el canal seleccionado.</span>
       </article>
 
-      <article class="mini-card summary-card summary-card-model">
+      <article class="mini-card summary-card summary-card-intervals">
         <div class="summary-top">
-          <span class="summary-badge summary-badge-green">Modelo</span>
+          <span class="summary-badge summary-badge-teal">Slots</span>
         </div>
-        <h3>Corridas del modelo</h3>
-        <p>{{ modelHistory.length }}</p>
-        <span class="summary-note">Entrenamientos y reentrenamientos registrados.</span>
+        <h3>Slots cargados</h3>
+        <p>{{ forecastIntervals.length }}</p>
+        <span class="summary-note">Detalle operativo del forecast seleccionado.</span>
+      </article>
+
+      <article class="mini-card summary-card summary-card-total">
+        <div class="summary-top">
+          <span class="summary-badge summary-badge-blue">Total diario</span>
+        </div>
+        <h3>Total pronosticado</h3>
+        <p>{{ intervalDailyTotal | number:'1.0-0' }}</p>
+        <span class="summary-note">Suma de interacciones del día operativo seleccionado.</span>
       </article>
 
       <article class="mini-card summary-card summary-card-logs">
@@ -73,19 +82,15 @@
         <p>{{ schedulerHistory.length }}</p>
         <span class="summary-note">Eventos recientes de ejecución automática.</span>
       </article>
-
     </section>
 
-    <!-- ── Historial ── -->
     <section class="history-section">
-
-      <!-- Forecasts recientes -->
       <div class="history-card featured-history-card">
         <div class="history-header">
           <div>
             <h3>Forecasts recientes</h3>
             <p class="history-subtitle">
-              Mostrando los {{ forecastHistory.length }} valores pronosticados más recientes para el canal seleccionado.
+              Haz clic en una fila para cargar el detalle operativo por intervalos de esa fecha.
             </p>
           </div>
           <span class="section-chip section-chip-purple">{{ channel }}</span>
@@ -98,14 +103,14 @@
                 <th>ID</th>
                 <th>Canal</th>
                 <th>Fecha forecast</th>
-                <th>Valor</th>
+                <th>Total diario</th>
                 <th>Modelo</th>
                 <th>Creado</th>
               </tr>
             </thead>
             <tbody>
               @for (item of forecastHistory; track item.id) {
-                <tr>
+                <tr class="clickable-row" [class.selected-row]="isSelectedForecastRun(item)" (click)="selectForecastRun(item)">
                   <td>{{ item.id }}</td>
                   <td>{{ item.channel }}</td>
                   <td>{{ item.forecast_date | limaDateTime }}</td>
@@ -114,7 +119,7 @@
                       {{ item.predicted_value | number:'1.2-2' }}
                     </span>
                   </td>
-                  <td>{{ item.model_version }}</td>
+                  <td>{{ item.model_version || '-' }}</td>
                   <td>{{ item.created_at | limaDateTime }}</td>
                 </tr>
               } @empty {
@@ -125,7 +130,88 @@
         </div>
       </div>
 
-      <!-- Corridas del modelo con gráfico MAPE -->
+      <div class="history-card interval-detail-card">
+        <div class="history-header">
+          <div>
+            <h3>Detalle operativo por intervalos</h3>
+            <p class="history-subtitle">
+              Tabla auditable del forecast operativo seleccionado, ordenada por slot.
+            </p>
+          </div>
+          <div class="section-chip-stack">
+            <span class="section-chip section-chip-purple">{{ channel }}</span>
+            <span class="section-chip section-chip-slate">{{ selectedForecastDateLabel }}</span>
+          </div>
+        </div>
+
+        <div class="interval-summary-strip">
+          <div class="interval-summary-item">
+            <span>Total diario</span>
+            <strong>{{ intervalDailyTotal | number:'1.2-2' }}</strong>
+          </div>
+          <div class="interval-summary-item">
+            <span>Slots</span>
+            <strong>{{ forecastIntervals.length }}</strong>
+          </div>
+          <div class="interval-summary-item">
+            <span>Pico operativo</span>
+            <strong>
+              @if (peakInterval) {
+                {{ peakInterval.interval_time.slice(0, 5) }} · {{ peakInterval.predicted_value | number:'1.2-2' }}
+              } @else {
+                -
+              }
+            </strong>
+          </div>
+        </div>
+
+        @if (intervalLoading) {
+          <div class="state-box loading inline-state-box">
+            <span class="spinner"></span> Cargando detalle operativo...
+          </div>
+        }
+        @if (intervalError && !intervalLoading) {
+          <div class="state-box error inline-state-box">{{ intervalError }}</div>
+        }
+
+        <div class="table-wrapper">
+          <table class="data-table data-table-intervals">
+            <thead>
+              <tr>
+                <th>Slot</th>
+                <th>Hora</th>
+                <th>Turno</th>
+                <th>Forecast</th>
+                <th>Forecast datetime</th>
+                <th>Modelo</th>
+                <th>Creado</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (item of forecastIntervals; track item.id) {
+                <tr>
+                  <td>{{ item.slot_index + 1 }}</td>
+                  <td>{{ item.interval_time.slice(0, 5) }}</td>
+                  <td>
+                    <span class="tag-pill" [class.tag-pill-morning]="item.shift_label === 'morning'" [class.tag-pill-afternoon]="item.shift_label === 'afternoon'">
+                      {{ getShiftLabel(item.shift_label) }}
+                    </span>
+                  </td>
+                  <td>
+                    <span class="value-pill value-pill-purple">{{ item.predicted_value | number:'1.2-2' }}</span>
+                  </td>
+                  <td>{{ item.forecast_datetime | limaDateTime }}</td>
+                  <td>{{ item.model_version || '-' }}</td>
+                  <td>{{ item.created_at | limaDateTime }}</td>
+                </tr>
+              } @empty {
+                <tr><td colspan="7" class="empty-row">No hay detalle por intervalos disponible.</td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="history-card">
         <div class="history-header">
           <div>
@@ -137,7 +223,6 @@
           <span class="section-chip section-chip-green">{{ channel }}</span>
         </div>
 
-        <!-- Gráfico de evolución de MAPE (SVG nativo) -->
         @if (mapeChartData.hasData) {
           <div class="mape-chart-section">
             <div class="mape-chart-title">
@@ -152,11 +237,8 @@
             </div>
 
             <div class="mape-chart-wrapper">
-              <!-- viewBox: 600×160 | zona de plot: x[48..576] y[14..128] -->
               <svg viewBox="0 0 600 160" class="chart-svg"
                    aria-label="Gráfico de evolución de MAPE por corrida del modelo">
-
-                <!-- Líneas de referencia -->
                 @for (gl of mapeChartData.gridLines; track gl.y) {
                   <line x1="48" x2="576"
                         [attr.y1]="gl.y" [attr.y2]="gl.y"
@@ -166,18 +248,15 @@
                         font-family="'Segoe UI', Tahoma, sans-serif">{{ gl.label }}</text>
                 }
 
-                <!-- Barras de MAPE -->
                 @for (bar of mapeChartData.bars; track bar.x) {
                   <rect [attr.x]="bar.x" [attr.y]="bar.y"
                         [attr.width]="bar.width" [attr.height]="bar.height"
                         [attr.fill]="bar.color" rx="3" opacity="0.88"/>
-                  <!-- Valor encima de la barra -->
                   <text [attr.x]="bar.x + bar.width / 2" [attr.y]="bar.y - 3"
                         text-anchor="middle" font-size="9" fill="#475569"
                         font-family="'Segoe UI', Tahoma, sans-serif">
                     {{ bar.value | number:'1.1-1' }}%
                   </text>
-                  <!-- Etiqueta de fecha debajo (solo si showLabel) -->
                   @if (bar.showLabel) {
                     <text [attr.x]="bar.x + bar.width / 2" y="156"
                           text-anchor="middle" font-size="9" fill="#94a3b8"
@@ -185,7 +264,6 @@
                   }
                 }
 
-                <!-- Línea de umbral al 15 % -->
                 <line x1="48" x2="576"
                       [attr.y1]="mapeChartData.thresholdY" [attr.y2]="mapeChartData.thresholdY"
                       stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.65"/>
@@ -193,7 +271,6 @@
                       font-size="9" fill="#b91c1c"
                       font-family="'Segoe UI', Tahoma, sans-serif">15%</text>
 
-                <!-- Línea base del eje X -->
                 <line x1="48" x2="576"
                       [attr.y1]="mapeChartData.bottom" [attr.y2]="mapeChartData.bottom"
                       stroke="#e2e8f0" stroke-width="1"/>
@@ -240,7 +317,6 @@
         </div>
       </div>
 
-      <!-- Logs del scheduler -->
       <div class="history-card">
         <div class="history-header">
           <div>
@@ -289,8 +365,6 @@
           </table>
         </div>
       </div>
-
     </section>
-
-  }<!-- fin @if !loading -->
+  }
 </div>

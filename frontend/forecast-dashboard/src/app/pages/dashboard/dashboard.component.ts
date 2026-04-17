@@ -1,7 +1,12 @@
 import { CommonModule, DecimalPipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { finalize } from 'rxjs';
-import { ForecastHistoryItem, SystemSummaryResponse } from '../../models/system-summary.model';
+import {
+  ForecastBatchResponse,
+  ForecastHistoryItem,
+  ForecastIntervalHistoryItem,
+  SystemSummaryResponse
+} from '../../models/system-summary.model';
 import { SystemSummaryService } from '../../services/system-summary.service';
 import { ModelActionsService } from '../../services/model-actions.service';
 import { ForecastActionsService } from '../../services/forecast-actions.service';
@@ -9,7 +14,6 @@ import { ChannelService } from '../../services/channel.service';
 import { ForecastHistoryService } from '../../services/forecast-history.service';
 import { LimaDateTimePipe } from '../../shared/pipes/lima-datetime.pipe';
 
-// Tipos locales para los datos del gráfico SVG
 interface ChartPoint {
   x: number;
   y: number;
@@ -33,6 +37,24 @@ interface ForecastChartData {
   maxLabel: string;
 }
 
+interface IntervalChartBar {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  value: number;
+  label: string;
+  showLabel: boolean;
+}
+
+interface IntervalChartData {
+  bars: IntervalChartBar[];
+  gridLines: GridLine[];
+  hasData: boolean;
+  bottom: number;
+  maxLabel: string;
+}
+
 interface MapeQuality {
   label: string;
   color: string;
@@ -53,8 +75,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private readonly channelService = inject(ChannelService);
   private readonly forecastHistoryService = inject(ForecastHistoryService);
 
+  private readonly forecastEnabledChannels = ['choice', 'espana'];
+
   summary: SystemSummaryResponse | null = null;
   forecastHistory: ForecastHistoryItem[] = [];
+  forecastIntervals: ForecastIntervalHistoryItem[] = [];
   availableChannels: string[] = [];
 
   loading = false;
@@ -64,6 +89,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
   actionLoading = false;
   actionMessage = '';
   actionError = '';
+
+  intervalLoading = false;
+  intervalError = '';
+  selectedForecastDate = '';
+  selectedForecastRunId: number | null = null;
 
   autoRefreshEnabled = true;
   autoRefreshIntervalSeconds = 30;
@@ -92,7 +122,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       },
       error: (error) => {
         console.error(error);
-        this.availableChannels = ['Choice'];
+        this.availableChannels = ['Choice', 'España'];
         this.loadSummary();
         this.loadForecastHistory();
       }
@@ -107,25 +137,91 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
     this.systemSummaryService
       .getSummary(this.channel)
-      .pipe(finalize(() => { if (!silent) this.loading = false; }))
+      .pipe(finalize(() => {
+        if (!silent) {
+          this.loading = false;
+        }
+      }))
       .subscribe({
         next: (response) => {
           this.summary = response;
-          if (silent) this.lastAutoRefreshAt = new Date();
+          if (silent) {
+            this.lastAutoRefreshAt = new Date();
+          }
         },
         error: (error) => {
           console.error(error);
-          if (!silent) this.errorMessage = 'No se pudo cargar el resumen del sistema.';
+          if (!silent) {
+            this.errorMessage = 'No se pudo cargar el resumen del sistema.';
+          }
         }
       });
   }
 
-  // Carga el historial de forecasts para alimentar el gráfico de tendencia
   loadForecastHistory(silent: boolean = false): void {
     this.forecastHistoryService.getHistory(this.channel, 20).subscribe({
-      next: (items) => { this.forecastHistory = items; },
-      error: () => {} // Fallo silencioso: el gráfico no se mostrará
+      next: (items) => {
+        this.forecastHistory = items;
+
+        const availableDates = items
+          .map((item) => this.extractDateOnly(item.forecast_date))
+          .filter((value): value is string => !!value);
+
+        const preferredDate = this.selectedForecastDate && availableDates.includes(this.selectedForecastDate)
+          ? this.selectedForecastDate
+          : availableDates[0] ?? '';
+
+        if (!preferredDate) {
+          this.selectedForecastDate = '';
+          this.selectedForecastRunId = null;
+          this.forecastIntervals = [];
+          this.intervalError = '';
+          return;
+        }
+
+        this.selectedForecastDate = preferredDate;
+        const selectedRun = items.find((item) => this.extractDateOnly(item.forecast_date) === preferredDate);
+        this.selectedForecastRunId = selectedRun?.id ?? null;
+        this.loadForecastIntervals(preferredDate, silent);
+      },
+      error: (error) => {
+        console.error(error);
+        this.forecastHistory = [];
+        this.forecastIntervals = [];
+        this.selectedForecastDate = '';
+        this.selectedForecastRunId = null;
+      }
     });
+  }
+
+  loadForecastIntervals(forecastDate: string, silent: boolean = false): void {
+    if (!silent) {
+      this.intervalLoading = true;
+      this.intervalError = '';
+    }
+
+    this.forecastHistoryService
+      .getIntervalHistory(this.channel, forecastDate, 2000)
+      .pipe(finalize(() => {
+        if (!silent) {
+          this.intervalLoading = false;
+        }
+      }))
+      .subscribe({
+        next: (items) => {
+          this.forecastIntervals = items.sort((a, b) => a.slot_index - b.slot_index);
+          if (silent) {
+            this.lastAutoRefreshAt = new Date();
+          }
+        },
+        error: (error) => {
+          console.error(error);
+          this.forecastIntervals = [];
+          if (!silent) {
+            this.intervalError = 'No se pudo cargar el detalle por intervalos.';
+          }
+        }
+      });
   }
 
   onChannelChange(event: Event): void {
@@ -133,8 +229,22 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.channel = value;
     this.actionMessage = '';
     this.actionError = '';
+    this.intervalError = '';
+    this.selectedForecastDate = '';
+    this.selectedForecastRunId = null;
     this.loadSummary();
     this.loadForecastHistory();
+  }
+
+  selectForecastRun(item: ForecastHistoryItem): void {
+    const forecastDate = this.extractDateOnly(item.forecast_date);
+    if (!forecastDate) {
+      return;
+    }
+
+    this.selectedForecastRunId = item.id;
+    this.selectedForecastDate = forecastDate;
+    this.loadForecastIntervals(forecastDate);
   }
 
   trainLstm(): void {
@@ -174,12 +284,228 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
   }
 
+  getStatusClass(status: string | null | undefined): string {
+    if (!status) return '';
+    const normalized = status.toLowerCase();
+    if (normalized === 'success' || normalized === 'activo') return 'status-success';
+    if (normalized === 'failed' || normalized === 'error') return 'status-failed';
+    if (normalized === 'running') return 'status-running';
+    return '';
+  }
+
+  get modelActionsDisabled(): boolean {
+    return !this.isForecastChannelEnabled(this.channel);
+  }
+
+  get forecastActionsDisabled(): boolean {
+    return !this.isForecastChannelEnabled(this.channel);
+  }
+
+  get selectedForecastHeader(): ForecastHistoryItem | null {
+    if (this.selectedForecastRunId == null) {
+      return this.forecastHistory[0] ?? null;
+    }
+
+    return this.forecastHistory.find((item) => item.id === this.selectedForecastRunId) ?? this.forecastHistory[0] ?? null;
+  }
+
+  get selectedForecastDateLabel(): string {
+    return this.formatDateOnly(this.selectedForecastDate);
+  }
+
+  get intervalDailyTotal(): number {
+    return this.forecastIntervals.reduce((sum, item) => sum + item.predicted_value, 0);
+  }
+
+  get intervalAverage(): number {
+    if (!this.forecastIntervals.length) {
+      return 0;
+    }
+
+    return this.intervalDailyTotal / this.forecastIntervals.length;
+  }
+
+  get peakInterval(): ForecastIntervalHistoryItem | null {
+    if (!this.forecastIntervals.length) {
+      return null;
+    }
+
+    return this.forecastIntervals.reduce((peak, item) => (
+      item.predicted_value > peak.predicted_value ? item : peak
+    ));
+  }
+
+  get latestOperationalModelVersion(): string {
+    return this.forecastIntervals[0]?.model_version
+      || this.selectedForecastHeader?.model_version
+      || this.summary?.latest_forecast?.model_version
+      || '-';
+  }
+
+  get intervalChartData(): IntervalChartData {
+    const PAD_L = 52, PAD_R = 18, PAD_T = 18, PAD_B = 34;
+    const W = 720, H = 240;
+    const plotW = W - PAD_L - PAD_R;
+    const plotH = H - PAD_T - PAD_B;
+    const bottom = PAD_T + plotH;
+
+    const empty: IntervalChartData = {
+      bars: [],
+      gridLines: [],
+      hasData: false,
+      bottom,
+      maxLabel: ''
+    };
+
+    if (!this.forecastIntervals.length) {
+      return empty;
+    }
+
+    const values = this.forecastIntervals.map((item) => item.predicted_value);
+    const maxValue = Math.max(...values, 1);
+    const toY = (value: number) => PAD_T + (1 - (value / maxValue)) * plotH;
+
+    const spacing = plotW / this.forecastIntervals.length;
+    const barWidth = Math.max(8, spacing * 0.68);
+    const labelStep = Math.max(1, Math.ceil(this.forecastIntervals.length / 8));
+
+    const bars: IntervalChartBar[] = this.forecastIntervals.map((item, index) => {
+      const x = PAD_L + index * spacing + (spacing - barWidth) / 2;
+      const y = toY(item.predicted_value);
+      const height = bottom - y;
+
+      return {
+        x: +x.toFixed(1),
+        y: +y.toFixed(1),
+        width: +barWidth.toFixed(1),
+        height: +height.toFixed(1),
+        value: item.predicted_value,
+        label: item.interval_time.slice(0, 5),
+        showLabel: index % labelStep === 0 || index === this.forecastIntervals.length - 1
+      };
+    });
+
+    const gridLines: GridLine[] = [0, 1, 2, 3].map((idx) => {
+      const value = (maxValue / 3) * idx;
+      return {
+        y: +toY(value).toFixed(1),
+        label: Math.round(value).toString()
+      };
+    }).reverse();
+
+    return {
+      bars,
+      gridLines,
+      hasData: true,
+      bottom,
+      maxLabel: Math.round(maxValue).toString()
+    };
+  }
+
+  get mapeQuality(): MapeQuality {
+    const mape = this.summary?.lstm_metrics?.mape;
+    if (mape == null) {
+      return { label: 'Sin datos', color: '#94a3b8', bgColor: '#f1f5f9', fillWidth: 0 };
+    }
+
+    const fillWidth = Math.min(mape, 30) / 30 * 100;
+    if (mape < 10) return { label: 'Excelente', color: '#15803d', bgColor: '#dcfce7', fillWidth };
+    if (mape < 15) return { label: 'Bueno', color: '#2563eb', bgColor: '#dbeafe', fillWidth };
+    if (mape < 20) return { label: 'Aceptable', color: '#b45309', bgColor: '#fef3c7', fillWidth };
+    return { label: 'Mejorable', color: '#b91c1c', bgColor: '#fee2e2', fillWidth };
+  }
+
+  get forecastChartData(): ForecastChartData {
+    const PAD_L = 52, PAD_R = 16, PAD_T = 14, PAD_B = 32;
+    const W = 600, H = 180;
+    const plotW = W - PAD_L - PAD_R;
+    const plotH = H - PAD_T - PAD_B;
+    const bottom = PAD_T + plotH;
+
+    const empty: ForecastChartData = {
+      linePath: '',
+      areaPath: '',
+      points: [],
+      gridLines: [],
+      xLabels: [],
+      hasData: false,
+      minLabel: '',
+      maxLabel: ''
+    };
+
+    const items = [...this.forecastHistory]
+      .filter((item) => item.predicted_value != null)
+      .sort((a, b) => new Date(a.forecast_date).getTime() - new Date(b.forecast_date).getTime())
+      .slice(-20);
+
+    if (items.length < 2) {
+      return empty;
+    }
+
+    const values = items.map((item) => item.predicted_value);
+    const rawMin = Math.min(...values);
+    const rawMax = Math.max(...values);
+    const range = rawMax - rawMin || rawMax * 0.1 || 1;
+    const minY = rawMin - range * 0.15;
+    const maxY = rawMax + range * 0.15;
+
+    const toX = (index: number) => PAD_L + (index / (items.length - 1)) * plotW;
+    const toY = (value: number) => PAD_T + (1 - (value - minY) / (maxY - minY)) * plotH;
+
+    const points: ChartPoint[] = items.map((item, index) => ({
+      x: +toX(index).toFixed(1),
+      y: +toY(item.predicted_value).toFixed(1),
+      value: item.predicted_value,
+      label: this.extractDateOnly(item.forecast_date)?.slice(5, 10) ?? item.forecast_date.slice(5, 10)
+    }));
+
+    const linePath = points
+      .map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x},${point.y}`)
+      .join(' ');
+
+    const areaPath =
+      `M${points[0].x},${bottom} ` +
+      points.map((point) => `L${point.x},${point.y}`).join(' ') +
+      ` L${points[points.length - 1].x},${bottom} Z`;
+
+    const gridLines: GridLine[] = [0, 1, 2, 3].map((idx) => {
+      const t = 1 - idx / 3;
+      const value = minY + t * (maxY - minY);
+      return { y: +toY(value).toFixed(1), label: Math.round(value).toString() };
+    });
+
+    const step = Math.max(1, Math.ceil(items.length / 6));
+    const xLabels = points.filter((_, index) => index % step === 0 || index === points.length - 1);
+
+    return {
+      linePath,
+      areaPath,
+      points,
+      gridLines,
+      xLabels,
+      hasData: true,
+      minLabel: Math.round(rawMin).toString(),
+      maxLabel: Math.round(rawMax).toString()
+    };
+  }
+
+  getShiftLabel(label: string | null | undefined): string {
+    const value = (label || '').toLowerCase();
+    if (value === 'morning') return 'Mañana';
+    if (value === 'afternoon') return 'Tarde';
+    return label || '-';
+  }
+
+  isSelectedForecastRun(item: ForecastHistoryItem): boolean {
+    return item.id === this.selectedForecastRunId;
+  }
+
   private startAutoRefresh(): void {
     this.stopAutoRefresh();
     if (!this.autoRefreshEnabled) return;
 
     this.autoRefreshTimerId = window.setInterval(() => {
-      if (this.loading || this.actionLoading) return;
+      if (this.loading || this.actionLoading || this.intervalLoading) return;
       this.loadSummary(true);
       this.loadForecastHistory(true);
     }, this.autoRefreshIntervalSeconds * 1000);
@@ -192,7 +518,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
   }
 
-  private executeAction(requestFactory: () => any, successFallbackMessage: string): void {
+  private executeAction(
+    requestFactory: () => ReturnType<ForecastActionsService['generateDailyForecast']> | any,
+    successFallbackMessage: string
+  ): void {
     this.actionLoading = true;
     this.actionMessage = '';
     this.actionError = '';
@@ -200,114 +529,59 @@ export class DashboardComponent implements OnInit, OnDestroy {
     requestFactory()
       .pipe(finalize(() => (this.actionLoading = false)))
       .subscribe({
-        next: (response: any) => {
-          this.actionMessage =
-            response?.message || response?.detail || successFallbackMessage;
+        next: (response: ForecastBatchResponse | any) => {
+          this.actionMessage = response?.message || response?.detail || successFallbackMessage;
+
+          if (response?.forecast_date) {
+            this.selectedForecastDate = this.extractDateOnly(response.forecast_date) ?? this.selectedForecastDate;
+            this.selectedForecastRunId = response?.id ?? this.selectedForecastRunId;
+          }
+
           this.loadSummary();
           this.loadForecastHistory();
         },
         error: (error: any) => {
           console.error(error);
-          this.actionError =
-            error?.error?.detail || 'Ocurrió un error al ejecutar la acción.';
+          this.actionError = error?.error?.detail || 'Ocurrió un error al ejecutar la acción.';
         }
       });
   }
 
-  getStatusClass(status: string | null | undefined): string {
-    if (!status) return '';
-    const normalized = status.toLowerCase();
-    if (normalized === 'success' || normalized === 'activo') return 'status-success';
-    if (normalized === 'failed' || normalized === 'error') return 'status-failed';
-    if (normalized === 'running') return 'status-running';
-    return '';
+  private isForecastChannelEnabled(channel: string): boolean {
+    return this.forecastEnabledChannels.includes(this.normalizeChannel(channel));
   }
 
-  get modelActionsDisabled(): boolean {
-    return this.channel !== 'Choice';
+  private normalizeChannel(channel: string | null | undefined): string {
+    return (channel || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
   }
 
-  // ──────────────────────────────────────────────
-  // Indicador de calidad del MAPE
-  // ──────────────────────────────────────────────
-  get mapeQuality(): MapeQuality {
-    const mape = this.summary?.lstm_metrics?.mape;
-    if (mape == null) {
-      return { label: 'Sin datos', color: '#94a3b8', bgColor: '#f1f5f9', fillWidth: 0 };
+  private extractDateOnly(value: string | null | undefined): string | null {
+    if (!value) {
+      return null;
     }
-    // Barra que se llena hasta el 30 % como máximo visual
-    const fillWidth = Math.min(mape, 30) / 30 * 100;
-    if (mape < 10) return { label: 'Excelente', color: '#15803d', bgColor: '#dcfce7', fillWidth };
-    if (mape < 15) return { label: 'Bueno',     color: '#2563eb', bgColor: '#dbeafe', fillWidth };
-    if (mape < 20) return { label: 'Aceptable', color: '#b45309', bgColor: '#fef3c7', fillWidth };
-    return            { label: 'Mejorable',  color: '#b91c1c', bgColor: '#fee2e2', fillWidth };
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return value;
+    }
+
+    const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+    return match ? match[1] : null;
   }
 
-  // ──────────────────────────────────────────────
-  // Datos para el gráfico SVG de tendencia de pronósticos
-  // viewBox="0 0 600 180"  PAD_L=52 PAD_R=16 PAD_T=14 PAD_B=32
-  // plotW=532  plotH=134  bottom=148
-  // ──────────────────────────────────────────────
-  get forecastChartData(): ForecastChartData {
-    const PAD_L = 52, PAD_R = 16, PAD_T = 14, PAD_B = 32;
-    const W = 600, H = 180;
-    const plotW = W - PAD_L - PAD_R;   // 532
-    const plotH = H - PAD_T - PAD_B;   // 134
-    const bottom = PAD_T + plotH;       // 148
+  private formatDateOnly(value: string | null | undefined): string {
+    if (!value) {
+      return '-';
+    }
 
-    const empty: ForecastChartData = {
-      linePath: '', areaPath: '', points: [], gridLines: [],
-      xLabels: [], hasData: false, minLabel: '', maxLabel: ''
-    };
+    const parts = value.split('-');
+    if (parts.length !== 3) {
+      return value;
+    }
 
-    const items = [...this.forecastHistory]
-      .filter(i => i.predicted_value != null)
-      .sort((a, b) => new Date(a.forecast_date).getTime() - new Date(b.forecast_date).getTime())
-      .slice(-20);
-
-    if (items.length < 2) return empty;
-
-    const values = items.map(i => i.predicted_value);
-    const rawMin = Math.min(...values);
-    const rawMax = Math.max(...values);
-    const range  = rawMax - rawMin || rawMax * 0.1 || 1;
-    const minY   = rawMin - range * 0.15;
-    const maxY   = rawMax + range * 0.15;
-
-    const toX = (i: number) => PAD_L + (i / (items.length - 1)) * plotW;
-    const toY = (v: number) => PAD_T + (1 - (v - minY) / (maxY - minY)) * plotH;
-
-    const points: ChartPoint[] = items.map((item, i) => ({
-      x: +toX(i).toFixed(1),
-      y: +toY(item.predicted_value).toFixed(1),
-      value: item.predicted_value,
-      label: item.forecast_date.slice(5, 10) // MM-DD
-    }));
-
-    const linePath = points
-      .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`)
-      .join(' ');
-
-    const areaPath =
-      `M${points[0].x},${bottom} ` +
-      points.map(p => `L${p.x},${p.y}`).join(' ') +
-      ` L${points[points.length - 1].x},${bottom} Z`;
-
-    // 4 líneas de referencia horizontales (de arriba hacia abajo)
-    const gridLines: GridLine[] = [0, 1, 2, 3].map(idx => {
-      const t = 1 - idx / 3;
-      const v = minY + t * (maxY - minY);
-      return { y: +toY(v).toFixed(1), label: Math.round(v).toString() };
-    });
-
-    // Etiquetas del eje X: máximo 6 visibles
-    const step = Math.max(1, Math.ceil(items.length / 6));
-    const xLabels = points.filter((_, i) => i % step === 0 || i === points.length - 1);
-
-    return {
-      linePath, areaPath, points, gridLines, xLabels, hasData: true,
-      minLabel: Math.round(rawMin).toString(),
-      maxLabel: Math.round(rawMax).toString()
-    };
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
   }
 }
