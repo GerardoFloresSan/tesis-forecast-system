@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pandas as pd
 
@@ -73,6 +73,43 @@ def get_shift_label(channel: str, minute_of_day: int) -> str:
         if start_minute <= minute_of_day <= end_minute:
             return label
     return "out_of_window"
+
+
+def get_operational_interval_times(channel: str, interval_minutes: int = 30) -> list[time]:
+    config = get_channel_config(channel)
+    interval_times: list[time] = []
+    current_minute = config["start_minute"]
+
+    while current_minute <= config["end_minute"]:
+        hour = current_minute // 60
+        minute_value = current_minute % 60
+        interval_times.append(time(hour=hour, minute=minute_value))
+        current_minute += interval_minutes
+
+    return interval_times
+
+
+def get_operational_day_datetimes(
+    forecast_date: date,
+    channel: str,
+    interval_minutes: int = 30,
+) -> list[datetime]:
+    return [
+        datetime.combine(forecast_date, interval_time)
+        for interval_time in get_operational_interval_times(channel, interval_minutes=interval_minutes)
+    ]
+
+
+def get_next_operational_day_date(last_datetime: datetime, channel: str) -> date:
+    canonicalize_channel(channel)
+    return last_datetime.date() + timedelta(days=1)
+
+
+def get_operational_day_start_datetime(forecast_date: date, channel: str) -> datetime:
+    interval_times = get_operational_interval_times(channel)
+    if not interval_times:
+        raise ValueError(f"No se pudo construir la ventana operativa para el canal '{channel}'.")
+    return datetime.combine(forecast_date, interval_times[0])
 
 
 def apply_business_hours_filter(

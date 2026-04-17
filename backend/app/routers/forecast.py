@@ -4,16 +4,19 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.schemas.forecast import (
+    ForecastBatchResponse,
     ForecastDatasetRow,
     ForecastGenerateRequest,
+    ForecastIntervalResponse,
     ForecastRunResponse,
 )
 from app.services.forecast_service import (
+    create_daily_forecast,
     get_available_channels,
     get_forecast_dataset,
     get_forecast_dataset_by_date,
-    create_daily_forecast,
     get_forecast_history,
+    get_interval_forecast_history,
 )
 
 router = APIRouter(prefix="/forecast", tags=["Forecast"])
@@ -71,7 +74,7 @@ def forecast_dataset_by_date(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/daily", response_model=ForecastRunResponse)
+@router.post("/daily", response_model=ForecastBatchResponse)
 def generate_daily_forecast(
     payload: ForecastGenerateRequest,
     db: Session = Depends(get_db),
@@ -90,5 +93,23 @@ def forecast_history(
 ):
     try:
         return get_forecast_history(db, channel, limit)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/history/intervals", response_model=list[ForecastIntervalResponse])
+def forecast_interval_history(
+    channel: str | None = Query(default=None),
+    forecast_date: date | None = Query(default=None),
+    limit: int = Query(default=2000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+):
+    try:
+        return get_interval_forecast_history(
+            db=db,
+            channel=channel,
+            forecast_date=forecast_date,
+            limit=limit,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -1,10 +1,12 @@
-from datetime import date
+from datetime import date, datetime
 from sqlalchemy.orm import Session
 
-from app.models.historical_interaction import HistoricalInteraction
 from app.models.external_variable import ExternalVariable
+from app.models.forecast_interval_run import ForecastIntervalRun
 from app.models.forecast_run import ForecastRun
-from app.services.lstm_service import predict_next_volume_for_channel
+from app.models.historical_interaction import HistoricalInteraction
+from app.services.lstm_service import predict_next_operational_day_for_channel
+from app.utils.channel_rules import canonicalize_channel
 
 
 def _normalize_variable_type(variable_type: str | None) -> str:
@@ -85,6 +87,33 @@ def _serialize_dataset_row(row, variables: dict[str, float]) -> dict:
         "is_holiday_any": float(max(is_holiday_peru, is_holiday_spain, is_holiday_mexico)),
         "campaign_day": float(variables.get("campaign_day", 0.0)),
         "absenteeism_rate": float(variables.get("absenteeism_rate", 0.0)),
+    }
+
+
+def _serialize_forecast_header(row: ForecastRun) -> dict:
+    return {
+        "id": row.id,
+        "channel": row.channel,
+        "forecast_date": row.forecast_date,
+        "predicted_value": row.predicted_value,
+        "model_version": row.model_version,
+        "created_at": row.created_at,
+    }
+
+
+def _serialize_interval_row(row: ForecastIntervalRun) -> dict:
+    return {
+        "id": row.id,
+        "forecast_run_id": row.forecast_run_id,
+        "channel": row.channel,
+        "forecast_date": row.forecast_date,
+        "forecast_datetime": row.forecast_datetime,
+        "interval_time": row.interval_time,
+        "slot_index": row.slot_index,
+        "shift_label": row.shift_label,
+        "predicted_value": row.predicted_value,
+        "model_version": row.model_version,
+        "created_at": row.created_at,
     }
 
 
@@ -171,53 +200,85 @@ def get_forecast_dataset_by_date(
 
 
 def create_daily_forecast(db: Session, channel: str):
-    prediction = predict_next_volume_for_channel(db, channel)
+    prediction_batch = predict_next_operational_day_for_channel(db, channel)
+    canonical_channel = canonicalize_channel(prediction_batch["channel"])
+    forecast_start_datetime = prediction_batch["forecast_start_datetime"]
+    now_utc = datetime.utcnow()
 
     existing_forecast = (
         db.query(ForecastRun)
-        .filter(ForecastRun.channel == prediction["channel"])
-        .filter(ForecastRun.forecast_date == prediction["forecast_date"])
+        .filter(ForecastRun.channel == canonical_channel)
+        .filter(ForecastRun.forecast_date == forecast_start_datetime)
         .first()
     )
 
+    operation = "created"
     if existing_forecast:
-        existing_forecast.predicted_value = prediction["predicted_value"]
-        existing_forecast.model_version = prediction["model_version"]
+        existing_forecast.predicted_value = prediction_batch["total_predicted_value"]
+        existing_forecast.model_version = prediction_batch["model_version"]
+        existing_forecast.created_at = now_utc
+        header_forecast = existing_forecast
+        operation = "updated"
+        db.flush()
 
-        db.commit()
-        db.refresh(existing_forecast)
+        (
+            db.query(ForecastIntervalRun)
+            .filter(ForecastIntervalRun.forecast_run_id == header_forecast.id)
+            .delete(synchronize_session=False)
+        )
+    else:
+        header_forecast = ForecastRun(
+            channel=canonical_channel,
+            forecast_date=forecast_start_datetime,
+            predicted_value=prediction_batch["total_predicted_value"],
+            model_version=prediction_batch["model_version"],
+            created_at=now_utc,
+        )
+        db.add(header_forecast)
+        db.flush()
 
-        return {
-            "id": existing_forecast.id,
-            "channel": existing_forecast.channel,
-            "forecast_date": existing_forecast.forecast_date,
-            "predicted_value": existing_forecast.predicted_value,
-            "model_version": existing_forecast.model_version,
-            "created_at": existing_forecast.created_at,
-            "operation": "updated",
-            "message": f"Forecast actualizado correctamente para el canal {existing_forecast.channel}.",
-        }
+    interval_rows = []
+    for item in prediction_batch["intervals"]:
+        interval_rows.append(
+            ForecastIntervalRun(
+                forecast_run_id=header_forecast.id,
+                channel=canonical_channel,
+                forecast_date=item["forecast_date"],
+                forecast_datetime=item["forecast_datetime"],
+                interval_time=item["interval_time"],
+                slot_index=item["slot_index"],
+                shift_label=item["shift_label"],
+                predicted_value=item["predicted_value"],
+                model_version=item["model_version"],
+                created_at=now_utc,
+            )
+        )
 
-    forecast = ForecastRun(
-        channel=prediction["channel"],
-        forecast_date=prediction["forecast_date"],
-        predicted_value=prediction["predicted_value"],
-        model_version=prediction["model_version"],
+    db.add_all(interval_rows)
+    db.commit()
+    db.refresh(header_forecast)
+
+    persisted_intervals = (
+        db.query(ForecastIntervalRun)
+        .filter(ForecastIntervalRun.forecast_run_id == header_forecast.id)
+        .order_by(ForecastIntervalRun.slot_index.asc())
+        .all()
     )
 
-    db.add(forecast)
-    db.commit()
-    db.refresh(forecast)
-
     return {
-        "id": forecast.id,
-        "channel": forecast.channel,
-        "forecast_date": forecast.forecast_date,
-        "predicted_value": forecast.predicted_value,
-        "model_version": forecast.model_version,
-        "created_at": forecast.created_at,
-        "operation": "created",
-        "message": f"Forecast creado correctamente para el canal {forecast.channel}.",
+        "id": header_forecast.id,
+        "channel": header_forecast.channel,
+        "forecast_date": prediction_batch["forecast_date"],
+        "forecast_start_datetime": forecast_start_datetime,
+        "total_predicted_value": header_forecast.predicted_value,
+        "intervals_generated": len(persisted_intervals),
+        "model_version": header_forecast.model_version,
+        "created_at": header_forecast.created_at,
+        "operation": operation,
+        "message": (
+            f"Forecast operativo por intervalos {operation} correctamente para el canal {header_forecast.channel}."
+        ),
+        "intervals": [_serialize_interval_row(row) for row in persisted_intervals],
     }
 
 
@@ -233,14 +294,51 @@ def get_forecast_history(db: Session, channel: str | None = None, limit: int = 5
         .all()
     )
 
-    return [
-        {
-            "id": row.id,
-            "channel": row.channel,
-            "forecast_date": row.forecast_date,
-            "predicted_value": row.predicted_value,
-            "model_version": row.model_version,
-            "created_at": row.created_at,
-        }
-        for row in rows
-    ]
+    return [_serialize_forecast_header(row) for row in rows]
+
+
+def get_interval_forecast_history(
+    db: Session,
+    channel: str | None = None,
+    forecast_date: date | None = None,
+    limit: int = 2000,
+):
+    query = db.query(ForecastIntervalRun)
+
+    if channel:
+        canonical_channel = canonicalize_channel(channel)
+        query = query.filter(ForecastIntervalRun.channel == canonical_channel)
+
+    if forecast_date:
+        query = query.filter(ForecastIntervalRun.forecast_date == forecast_date)
+        rows = (
+            query.order_by(
+                ForecastIntervalRun.forecast_date.desc(),
+                ForecastIntervalRun.slot_index.asc(),
+            )
+            .limit(limit)
+            .all()
+        )
+        return [_serialize_interval_row(row) for row in rows]
+
+    latest_row_query = db.query(ForecastIntervalRun)
+    if channel:
+        latest_row_query = latest_row_query.filter(ForecastIntervalRun.channel == canonical_channel)
+
+    latest_row = (
+        latest_row_query
+        .order_by(ForecastIntervalRun.created_at.desc(), ForecastIntervalRun.forecast_datetime.desc())
+        .first()
+    )
+
+    if latest_row is None:
+        return []
+
+    rows = (
+        query.filter(ForecastIntervalRun.forecast_run_id == latest_row.forecast_run_id)
+        .order_by(ForecastIntervalRun.slot_index.asc())
+        .limit(limit)
+        .all()
+    )
+
+    return [_serialize_interval_row(row) for row in rows]

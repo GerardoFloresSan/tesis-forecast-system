@@ -8,6 +8,7 @@ from app.models.historical_interaction import HistoricalInteraction
 from app.models.external_variable import ExternalVariable
 from app.models.data_quality_report import DataQualityReport
 from app.models.forecast_run import ForecastRun
+from app.models.forecast_interval_run import ForecastIntervalRun
 from app.models.model_train_run import ModelTrainRun
 from app.models.scheduler_job_run import SchedulerJobRun
 
