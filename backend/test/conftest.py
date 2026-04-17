@@ -22,12 +22,16 @@ from fastapi.testclient import TestClient
 from app.core.database import Base, SessionLocal, engine
 from app.routers.upload import router as upload_router
 from app.routers.quality import router as quality_router
+from app.routers.forecast import router as forecast_router
+from app.routers.model import router as model_router
 
 
 def create_test_app() -> FastAPI:
     app = FastAPI(title="Forecast Test API")
     app.include_router(upload_router)
     app.include_router(quality_router)
+    app.include_router(forecast_router)
+    app.include_router(model_router)
     return app
 
 
