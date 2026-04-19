@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.database import Base, engine
+from app.core.database import Base, SessionLocal, engine
 
+from app.models.api_access_log import APIAccessLog
 from app.models.user import User
 from app.models.etl_run import EtlRun
 from app.models.historical_interaction import HistoricalInteraction
@@ -20,7 +21,8 @@ from app.routers.forecast import router as forecast_router
 from app.routers.preprocessing import router as preprocessing_router
 from app.routers.model import router as model_router
 
-from app.services.scheduler_service import start_scheduler, shutdown_scheduler
+from app.services.auth_service import ensure_default_user
+from app.services.scheduler_service import shutdown_scheduler, start_scheduler
 
 Base.metadata.create_all(bind=engine)
 
@@ -48,6 +50,12 @@ app.include_router(model_router)
 
 @app.on_event("startup")
 def on_startup():
+    db = SessionLocal()
+    try:
+        ensure_default_user(db)
+    finally:
+        db.close()
+
     start_scheduler()
 
 
