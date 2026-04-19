@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.data_quality_report import DataQualityReport
 from app.models.historical_interaction import HistoricalInteraction
+from app.utils.channel_rules import canonicalize_channel, get_operational_interval_times
 
 LOGICAL_KEY_COLUMNS = ["interaction_date", "interval_time", "channel"]
 DATA_COLUMNS = ["interaction_date", "interval_time", "channel", "volume", "aht"]
@@ -32,21 +33,25 @@ def _serialize_date(value: date | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _load_historical_dataframe(db: Session) -> pd.DataFrame:
+def _load_historical_dataframe(db: Session, channel: str | None = None) -> pd.DataFrame:
+    query = db.query(
+        HistoricalInteraction.interaction_date,
+        HistoricalInteraction.interval_time,
+        HistoricalInteraction.channel,
+        HistoricalInteraction.volume,
+        HistoricalInteraction.aht,
+    )
+
+    if channel:
+        canonical_channel = canonicalize_channel(channel)
+        query = query.filter(HistoricalInteraction.channel == canonical_channel)
+
     rows = (
-        db.query(
+        query.order_by(
             HistoricalInteraction.interaction_date,
             HistoricalInteraction.interval_time,
             HistoricalInteraction.channel,
-            HistoricalInteraction.volume,
-            HistoricalInteraction.aht,
-        )
-        .order_by(
-            HistoricalInteraction.interaction_date,
-            HistoricalInteraction.interval_time,
-            HistoricalInteraction.channel,
-        )
-        .all()
+        ).all()
     )
 
     if not rows:
@@ -157,12 +162,38 @@ def _infer_cadence_minutes(unique_minutes: list[int]) -> int | None:
     return diff_counter.most_common(1)[0][0]
 
 
-def _compute_interval_quality(df: pd.DataFrame) -> dict[str, Any]:
+def _get_expected_minutes_for_channel(
+    channel: str,
+    actual_minutes: list[int],
+    cadence_minutes: int | None,
+    *,
+    use_operational_window: bool = False,
+) -> list[int]:
+    if use_operational_window:
+        try:
+            operational_minutes = [
+                _time_to_minutes(interval_time)
+                for interval_time in get_operational_interval_times(channel)
+            ]
+            return [value for value in operational_minutes if value is not None]
+        except ValueError:
+            pass
+
+    if cadence_minutes and actual_minutes:
+        return list(range(actual_minutes[0], actual_minutes[-1] + cadence_minutes, cadence_minutes))
+    return actual_minutes
+
+
+def _compute_interval_quality(
+    df: pd.DataFrame,
+    *,
+    interval_mode: str = "dynamic_day",
+) -> dict[str, Any]:
     channels_summary: list[dict[str, Any]] = []
     total_invalid_intervals = 0
     total_missing_intervals = 0
 
-    for channel in sorted(df["channel"].dropna().unique().tolist()):
+    for channel in sorted(df["channel"].dropna().astype(str).unique().tolist()):
         channel_df = df[df["channel"] == channel].copy()
         unique_minutes = sorted(
             {
@@ -172,6 +203,17 @@ def _compute_interval_quality(df: pd.DataFrame) -> dict[str, Any]:
             }
         )
         cadence_minutes = _infer_cadence_minutes(unique_minutes)
+
+        operational_minutes: list[int] = []
+        operational_minute_set: set[int] = set()
+        if interval_mode == "operational_window":
+            operational_minutes = _get_expected_minutes_for_channel(
+                channel,
+                unique_minutes,
+                cadence_minutes,
+                use_operational_window=True,
+            )
+            operational_minute_set = set(operational_minutes)
 
         invalid_samples: list[dict[str, Any]] = []
         missing_samples: list[dict[str, Any]] = []
@@ -195,14 +237,27 @@ def _compute_interval_quality(df: pd.DataFrame) -> dict[str, Any]:
             missing_minutes: list[int] = []
 
             if cadence_minutes:
-                invalid_minutes = [minute for minute in actual_minutes if minute % cadence_minutes != 0]
-                aligned_minutes = sorted(set(actual_minutes) - set(invalid_minutes))
-
-                if aligned_minutes:
-                    expected_minutes = set(
-                        range(aligned_minutes[0], aligned_minutes[-1] + cadence_minutes, cadence_minutes)
+                if interval_mode == "operational_window" and operational_minutes:
+                    min_expected = min(operational_minutes)
+                    max_expected = max(operational_minutes)
+                    invalid_minutes = [
+                        minute
+                        for minute in actual_minutes
+                        if min_expected <= minute <= max_expected and minute not in operational_minute_set
+                    ]
+                    aligned_minutes = sorted(
+                        minute for minute in actual_minutes if minute in operational_minute_set
                     )
-                    missing_minutes = sorted(expected_minutes - set(aligned_minutes))
+                    missing_minutes = sorted(operational_minute_set - set(aligned_minutes))
+                else:
+                    invalid_minutes = [minute for minute in actual_minutes if minute % cadence_minutes != 0]
+                    aligned_minutes = sorted(set(actual_minutes) - set(invalid_minutes))
+
+                    if aligned_minutes:
+                        expected_minutes = set(
+                            range(aligned_minutes[0], aligned_minutes[-1] + cadence_minutes, cadence_minutes)
+                        )
+                        missing_minutes = sorted(expected_minutes - set(aligned_minutes))
 
             if invalid_minutes or missing_minutes:
                 days_with_issues += 1
@@ -264,7 +319,7 @@ def _compute_missing_days(df: pd.DataFrame) -> dict[str, Any]:
     missing_dates = [current_date for current_date in full_range if current_date not in all_dates]
 
     missing_by_channel: dict[str, list[str]] = {}
-    for channel in sorted(df["channel"].dropna().unique().tolist()):
+    for channel in sorted(df["channel"].dropna().astype(str).unique().tolist()):
         channel_dates = set(df.loc[df["channel"] == channel, "interaction_date"].dropna().tolist())
         channel_missing = [current_date for current_date in full_range if current_date not in channel_dates]
         missing_by_channel[channel] = [_serialize_date(value) for value in channel_missing]
@@ -284,6 +339,8 @@ def _build_summary(
     total_invalid_intervals: int,
     total_missing_intervals: int,
     missing_days_count: int,
+    *,
+    for_training: bool = False,
 ) -> dict[str, Any]:
     issues: list[str] = []
 
@@ -304,12 +361,22 @@ def _build_summary(
     if missing_days_count > 0:
         issues.append(f"Se detectaron {missing_days_count} días sin data dentro del rango de fechas.")
 
-    if total_records == 0 or required_null_rows > 0 or missing_days_count > 0:
-        status = "ERROR"
-    elif issues:
-        status = "WARNING"
+    if for_training:
+        # El entrenamiento ya filtra horario operativo y consolida duplicados. En esta etapa
+        # bloqueamos solo problemas severos que sí hacen inviable el proceso.
+        blocking_issues = (
+            total_records == 0
+            or required_null_rows > 0
+            or total_invalid_intervals > 0
+        )
+        status = "ERROR" if blocking_issues else ("WARNING" if issues else "OK")
     else:
-        status = "OK"
+        if total_records == 0 or required_null_rows > 0 or missing_days_count > 0:
+            status = "ERROR"
+        elif issues:
+            status = "WARNING"
+        else:
+            status = "OK"
 
     return {
         "status": status,
@@ -317,24 +384,17 @@ def _build_summary(
     }
 
 
-def generate_quality_report(db: Session) -> dict[str, Any]:
-    df = _load_historical_dataframe(db)
+def _build_quality_payload(df: pd.DataFrame, *, for_training: bool = False) -> dict[str, Any]:
     total_records = len(df)
 
     if total_records == 0:
-        empty_response = _build_empty_response()
-
-        report = DataQualityReport(
-            total_records=0,
-            missing_percentage=0.0,
-            duplicate_percentage=0.0,
-            valid_percentage=0.0,
-        )
-        db.add(report)
-        db.commit()
-        db.refresh(report)
-
-        return empty_response
+        payload = _build_empty_response()
+        if for_training:
+            payload["summary"] = {
+                "status": "ERROR",
+                "issues": ["No hay registros cargados en historical_interactions."],
+            }
+        return payload
 
     nulls_by_column = {
         column: int(df[column].isna().sum())
@@ -350,7 +410,10 @@ def generate_quality_report(db: Session) -> dict[str, Any]:
         for channel, count in df["channel"].dropna().astype(str).value_counts().sort_index().items()
     }
     duplicate_keys = _compute_duplicates(df)
-    interval_quality = _compute_interval_quality(df)
+    interval_quality = _compute_interval_quality(
+        df,
+        interval_mode="operational_window" if for_training else "dynamic_day",
+    )
     days_without_data = _compute_missing_days(df)
     summary = _build_summary(
         total_records=total_records,
@@ -360,6 +423,7 @@ def generate_quality_report(db: Session) -> dict[str, Any]:
         total_invalid_intervals=interval_quality["total_invalid_intervals"],
         total_missing_intervals=interval_quality["total_missing_intervals"],
         missing_days_count=days_without_data["count"],
+        for_training=for_training,
     )
 
     missing_percentage = (rows_with_any_null / total_records) * 100 if total_records else 0.0
@@ -368,21 +432,11 @@ def generate_quality_report(db: Session) -> dict[str, Any]:
     if valid_percentage < 0:
         valid_percentage = 0.0
 
-    report = DataQualityReport(
-        total_records=total_records,
-        missing_percentage=round(missing_percentage, 2),
-        duplicate_percentage=round(duplicate_percentage, 2),
-        valid_percentage=round(valid_percentage, 2),
-    )
-    db.add(report)
-    db.commit()
-    db.refresh(report)
-
     return {
         "total_records": total_records,
-        "missing_percentage": report.missing_percentage,
-        "duplicate_percentage": report.duplicate_percentage,
-        "valid_percentage": report.valid_percentage,
+        "missing_percentage": round(missing_percentage, 2),
+        "duplicate_percentage": round(duplicate_percentage, 2),
+        "valid_percentage": round(valid_percentage, 2),
         "date_range": date_range,
         "detected_channels": detected_channels,
         "records_by_channel": records_by_channel,
@@ -392,3 +446,34 @@ def generate_quality_report(db: Session) -> dict[str, Any]:
         "days_without_data": days_without_data,
         "summary": summary,
     }
+
+
+def evaluate_data_quality(
+    db: Session,
+    channel: str | None = None,
+    *,
+    for_training: bool = False,
+) -> dict[str, Any]:
+    df = _load_historical_dataframe(db, channel=channel)
+    return _build_quality_payload(df, for_training=for_training)["summary"]
+
+
+
+def generate_quality_report(db: Session) -> dict[str, Any]:
+    df = _load_historical_dataframe(db)
+    payload = _build_quality_payload(df)
+
+    report = DataQualityReport(
+        total_records=payload["total_records"],
+        missing_percentage=payload["missing_percentage"],
+        duplicate_percentage=payload["duplicate_percentage"],
+        valid_percentage=payload["valid_percentage"],
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+
+    payload["missing_percentage"] = report.missing_percentage
+    payload["duplicate_percentage"] = report.duplicate_percentage
+    payload["valid_percentage"] = report.valid_percentage
+    return payload

@@ -129,6 +129,7 @@ class LstmCheckRetrainResponse(BaseModel):
     channel: str
     threshold_mape: float
     current_mape: float | None = None
+    previous_mape: float | None = None
     should_retrain: bool
     action_taken: str
     message: str

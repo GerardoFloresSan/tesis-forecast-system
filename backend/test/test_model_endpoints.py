@@ -243,3 +243,33 @@ def test_get_system_summary_returns_400_when_service_fails(client, monkeypatch):
     response = client.get("/model/system-summary", params={"channel": "Mexico"})
     assert response.status_code == 400
     assert response.json()["detail"] == "Canal no soportado para system summary."
+
+def test_check_and_retrain_endpoint_returns_previous_mape(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.routers.model.check_and_retrain_lstm",
+        lambda db, channel, threshold_mape: {
+            "channel": channel,
+            "threshold_mape": threshold_mape,
+            "current_mape": 12.2,
+            "previous_mape": 18.5,
+            "should_retrain": True,
+            "action_taken": "retrain",
+            "message": "Reentrenamiento completado. MAPE anterior: 18.5%, MAPE nuevo: 12.2%",
+            "run_id": 77,
+            "run_type": "retrain",
+            "status": "success",
+        },
+    )
+
+    response = client.post(
+        "/model/check-and-retrain-lstm",
+        params={"channel": "Choice", "threshold_mape": 15.0},
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["channel"] == "Choice"
+    assert body["previous_mape"] == 18.5
+    assert body["current_mape"] == 12.2
+    assert body["action_taken"] == "retrain"
+    assert body["run_id"] == 77

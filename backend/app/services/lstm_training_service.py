@@ -10,6 +10,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.models.model_train_run import ModelTrainRun
+from app.services.quality_service import evaluate_data_quality
 from app.utils.channel_rules import canonicalize_channel, slugify_channel
 
 
@@ -138,6 +139,13 @@ def train_lstm_model(db: Session, channel: str = "Choice", run_type: str = "trai
     canonical_channel = canonicalize_channel(channel)
     run = _create_run_record(db, canonical_channel, run_type)
 
+    quality_check = evaluate_data_quality(db, channel=canonical_channel, for_training=True)
+    if quality_check["status"] == "ERROR":
+        issues_text = "; ".join(quality_check.get("issues", []))
+        error_message = f"Gate de calidad bloqueó el entrenamiento: {issues_text}"
+        _mark_run_failed(db, run, error_message)
+        raise ValueError(f"Datos no aptos para entrenamiento: {issues_text}")
+
     python_executable = _resolve_python_executable()
     command = [python_executable, "-m", "scripts.train_lstm", "--channel", canonical_channel]
 
@@ -233,7 +241,8 @@ def check_and_retrain_lstm(db: Session, channel: str = "Choice", threshold_mape:
         return {
             "channel": canonical_channel,
             "threshold_mape": threshold_mape,
-            "current_mape": None,
+            "current_mape": result.get("mape"),
+            "previous_mape": None,
             "should_retrain": True,
             "action_taken": "train",
             "message": "No existían artefactos completos del modelo. Se ejecutó entrenamiento inicial.",
@@ -242,20 +251,23 @@ def check_and_retrain_lstm(db: Session, channel: str = "Choice", threshold_mape:
             "status": result["status"],
         }
 
-    metrics = get_lstm_metrics(canonical_channel)
-    current_mape = metrics["mape"]
+    previous_metrics = get_lstm_metrics(canonical_channel)
+    previous_mape = previous_metrics["mape"]
 
-    if current_mape > threshold_mape:
+    if previous_mape > threshold_mape:
         result = retrain_lstm_model(db=db, channel=canonical_channel)
+        new_metrics = get_lstm_metrics(canonical_channel)
+        new_mape = new_metrics["mape"]
         return {
             "channel": canonical_channel,
             "threshold_mape": threshold_mape,
-            "current_mape": current_mape,
+            "current_mape": new_mape,
+            "previous_mape": previous_mape,
             "should_retrain": True,
             "action_taken": "retrain",
             "message": (
-                f"El MAPE actual ({current_mape}) supera el umbral ({threshold_mape}). "
-                "Se ejecutó reentrenamiento."
+                "Reentrenamiento completado. "
+                f"MAPE anterior: {previous_mape}%, MAPE nuevo: {new_mape}%"
             ),
             "run_id": result["run_id"],
             "run_type": result["run_type"],
@@ -265,11 +277,12 @@ def check_and_retrain_lstm(db: Session, channel: str = "Choice", threshold_mape:
     return {
         "channel": canonical_channel,
         "threshold_mape": threshold_mape,
-        "current_mape": current_mape,
+        "current_mape": previous_mape,
+        "previous_mape": previous_mape,
         "should_retrain": False,
         "action_taken": "none",
         "message": (
-            f"El MAPE actual ({current_mape}) no supera el umbral ({threshold_mape}). "
+            f"El MAPE actual ({previous_mape}) no supera el umbral ({threshold_mape}). "
             "No se ejecutó reentrenamiento."
         ),
         "run_id": None,
