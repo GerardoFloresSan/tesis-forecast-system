@@ -57,3 +57,19 @@ class ForecastBatchResponse(BaseModel):
     operation: str
     message: str
     intervals: list[ForecastIntervalResponse]
+
+
+class ForecastApiResponse(BaseModel):
+    date: date
+    channel: str
+    expected_volume: float
+    actual_volume: float | None = None
+    error_level: str
+    risk_level: str
+    deviation_percentage: float | None = None
+    has_breach: bool
+    model_version: str | None = None
+    forecast_run_id: int
+    generated_at: datetime
+    intervals_generated: int
+    message: str

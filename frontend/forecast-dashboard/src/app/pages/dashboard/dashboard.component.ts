@@ -1,10 +1,12 @@
 import { CommonModule, DecimalPipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject } from '@angular/core';
-import { finalize } from 'rxjs';
+import { finalize, forkJoin } from 'rxjs';
 import {
   ForecastBatchResponse,
   ForecastHistoryItem,
   ForecastIntervalHistoryItem,
+  ForecastMonitoringResponse,
+  SLAAlertResponse,
   SystemSummaryResponse
 } from '../../models/system-summary.model';
 import { SystemSummaryService } from '../../services/system-summary.service';
@@ -12,6 +14,8 @@ import { ModelActionsService } from '../../services/model-actions.service';
 import { ForecastActionsService } from '../../services/forecast-actions.service';
 import { ChannelService } from '../../services/channel.service';
 import { ForecastHistoryService } from '../../services/forecast-history.service';
+import { ForecastMonitoringService } from '../../services/forecast-monitoring.service';
+import { AlertsService } from '../../services/alerts.service';
 import { LimaDateTimePipe } from '../../shared/pipes/lima-datetime.pipe';
 
 interface ChartPoint {
@@ -74,13 +78,19 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private readonly forecastActionsService = inject(ForecastActionsService);
   private readonly channelService = inject(ChannelService);
   private readonly forecastHistoryService = inject(ForecastHistoryService);
-
+  private readonly forecastMonitoringService = inject(ForecastMonitoringService);
+  private readonly alertsService = inject(AlertsService);
   private readonly forecastEnabledChannels = ['choice', 'espana'];
 
   summary: SystemSummaryResponse | null = null;
   forecastHistory: ForecastHistoryItem[] = [];
   forecastIntervals: ForecastIntervalHistoryItem[] = [];
   availableChannels: string[] = [];
+
+  monitoringSummary: ForecastMonitoringResponse | null = null;
+  monitoringByDate: ForecastMonitoringResponse | null = null;
+  activeAlerts: SLAAlertResponse[] = [];
+  alertHistory: SLAAlertResponse[] = [];
 
   loading = false;
   errorMessage = '';
@@ -92,6 +102,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   intervalLoading = false;
   intervalError = '';
+
+  monitoringLoading = false;
+  alertsLoading = false;
+  monitoringError = '';
+  alertError = '';
   selectedForecastDate = '';
   selectedForecastRunId: number | null = null;
 
@@ -119,12 +134,16 @@ export class DashboardComponent implements OnInit, OnDestroy {
         }
         this.loadSummary();
         this.loadForecastHistory();
+        this.loadMonitoringSummary();
+        this.loadAlerts();
       },
       error: (error) => {
         console.error(error);
         this.availableChannels = ['Choice', 'España'];
         this.loadSummary();
         this.loadForecastHistory();
+        this.loadMonitoringSummary();
+        this.loadAlerts();
       }
     });
   }
@@ -175,6 +194,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
           this.selectedForecastDate = '';
           this.selectedForecastRunId = null;
           this.forecastIntervals = [];
+          this.monitoringByDate = null;
           this.intervalError = '';
           return;
         }
@@ -183,11 +203,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
         const selectedRun = items.find((item) => this.extractDateOnly(item.forecast_date) === preferredDate);
         this.selectedForecastRunId = selectedRun?.id ?? null;
         this.loadForecastIntervals(preferredDate, silent);
+        this.loadMonitoringByDate(preferredDate, silent);
       },
       error: (error) => {
         console.error(error);
         this.forecastHistory = [];
         this.forecastIntervals = [];
+        this.monitoringByDate = null;
         this.selectedForecastDate = '';
         this.selectedForecastRunId = null;
       }
@@ -230,10 +252,15 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.actionMessage = '';
     this.actionError = '';
     this.intervalError = '';
+    this.monitoringError = '';
+    this.alertError = '';
     this.selectedForecastDate = '';
     this.selectedForecastRunId = null;
+    this.monitoringByDate = null;
     this.loadSummary();
     this.loadForecastHistory();
+    this.loadMonitoringSummary();
+    this.loadAlerts();
   }
 
   selectForecastRun(item: ForecastHistoryItem): void {
@@ -245,6 +272,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.selectedForecastRunId = item.id;
     this.selectedForecastDate = forecastDate;
     this.loadForecastIntervals(forecastDate);
+    this.loadMonitoringByDate(forecastDate);
   }
 
   trainLstm(): void {
@@ -500,6 +528,146 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return item.id === this.selectedForecastRunId;
   }
 
+    loadMonitoringSummary(silent: boolean = false): void {
+    if (!silent) {
+      this.monitoringLoading = true;
+      this.monitoringError = '';
+    }
+
+    this.forecastMonitoringService
+      .getSummary(this.channel)
+      .pipe(finalize(() => {
+        if (!silent) {
+          this.monitoringLoading = false;
+        }
+      }))
+      .subscribe({
+        next: (response) => {
+          this.monitoringSummary = response;
+        },
+        error: (error) => {
+          console.error(error);
+          this.monitoringSummary = null;
+          if (!silent) {
+            this.monitoringError = 'No se pudo cargar el resumen de monitoreo.';
+          }
+        }
+      });
+  }
+
+  loadMonitoringByDate(forecastDate: string, silent: boolean = false): void {
+    if (!forecastDate) {
+      this.monitoringByDate = null;
+      return;
+    }
+
+    if (!silent) {
+      this.monitoringLoading = true;
+      this.monitoringError = '';
+    }
+
+    this.forecastMonitoringService
+      .getByDate(this.channel, forecastDate)
+      .pipe(finalize(() => {
+        if (!silent) {
+          this.monitoringLoading = false;
+        }
+      }))
+      .subscribe({
+        next: (response) => {
+          this.monitoringByDate = response;
+        },
+        error: (error) => {
+          console.error(error);
+          this.monitoringByDate = null;
+          if (!silent) {
+            this.monitoringError = 'No se pudo cargar la comparación forecast vs real.';
+          }
+        }
+      });
+  }
+
+  loadAlerts(silent: boolean = false): void {
+    if (!silent) {
+      this.alertsLoading = true;
+      this.alertError = '';
+    }
+
+    forkJoin({
+      active: this.alertsService.getActive(this.channel, 10),
+      history: this.alertsService.getHistory(this.channel, 20)
+    })
+      .pipe(finalize(() => {
+        if (!silent) {
+          this.alertsLoading = false;
+        }
+      }))
+      .subscribe({
+        next: (response) => {
+          this.activeAlerts = response.active;
+          this.alertHistory = response.history;
+        },
+        error: (error) => {
+          console.error(error);
+          this.activeAlerts = [];
+          this.alertHistory = [];
+          if (!silent) {
+            this.alertError = 'No se pudieron cargar las alertas del canal.';
+          }
+        }
+      });
+  }
+
+  printDashboard(): void {
+    window.print();
+  }
+
+  get selectedMonitoring(): ForecastMonitoringResponse | null {
+    return this.monitoringByDate ?? this.monitoringSummary;
+  }
+
+  get activeAlertCount(): number {
+    return this.activeAlerts.length;
+  }
+
+  get activeCriticalAlertsCount(): number {
+    return this.activeAlerts.filter((item) => item.risk_level === 'critical').length;
+  }
+
+  get selectedMonitoringRiskLabel(): string {
+    const value = (this.selectedMonitoring?.risk_level || '').toLowerCase();
+    if (value === 'critical') return 'Crítico';
+    if (value === 'warning') return 'Advertencia';
+    if (value === 'normal') return 'Normal';
+    if (value === 'unknown') return 'Sin datos reales';
+    return this.selectedMonitoring?.risk_level || '-';
+  }
+
+  get selectedMonitoringErrorLabel(): string {
+    const value = (this.selectedMonitoring?.error_level || '').toLowerCase();
+    if (value === 'high_error') return 'Error alto';
+    if (value === 'medium_error') return 'Error medio';
+    if (value === 'low_error') return 'Error bajo';
+    if (value === 'no_actual_data') return 'Sin data real';
+    return this.selectedMonitoring?.error_level || '-';
+  }
+
+  getRiskClass(riskLevel: string | null | undefined): string {
+    const value = (riskLevel || '').toLowerCase();
+    if (value === 'critical') return 'risk-critical';
+    if (value === 'warning') return 'risk-warning';
+    if (value === 'normal') return 'risk-normal';
+    return 'risk-unknown';
+  }
+
+  getAlertStatusLabel(status: string | null | undefined): string {
+    const value = (status || '').toLowerCase();
+    if (value === 'active') return 'Activa';
+    if (value === 'acknowledged') return 'Reconocida';
+    if (value === 'resolved') return 'Resuelta';
+    return status || '-';
+  }
+
   private startAutoRefresh(): void {
     this.stopAutoRefresh();
     if (!this.autoRefreshEnabled) return;
@@ -508,6 +676,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
       if (this.loading || this.actionLoading || this.intervalLoading) return;
       this.loadSummary(true);
       this.loadForecastHistory(true);
+      this.loadMonitoringSummary(true);
+      this.loadAlerts(true);
     }, this.autoRefreshIntervalSeconds * 1000);
   }
 
@@ -539,6 +709,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
           this.loadSummary();
           this.loadForecastHistory();
+          this.loadMonitoringSummary();
+          this.loadAlerts();
         },
         error: (error: any) => {
           console.error(error);

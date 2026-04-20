@@ -1,14 +1,25 @@
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, Query
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.dependencies import get_current_user
+from app.models.user import User
 from app.schemas.forecast import (
+    ForecastApiResponse,
     ForecastBatchResponse,
     ForecastDatasetRow,
     ForecastGenerateRequest,
     ForecastIntervalResponse,
     ForecastRunResponse,
+)
+from app.schemas.monitoring import ForecastMonitoringResponse
+from app.services.api_audit_service import log_api_access
+from app.services.forecast_api_service import get_daily_forecast_api_payload
+from app.services.forecast_monitoring_service import (
+    get_forecast_monitoring_by_date,
+    get_latest_forecast_monitoring_summary,
 )
 from app.services.forecast_service import (
     create_daily_forecast,
@@ -112,4 +123,77 @@ def forecast_interval_history(
             limit=limit,
         )
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/monitoring/summary", response_model=ForecastMonitoringResponse)
+def forecast_monitoring_summary(
+    channel: str = Query(default="Choice"),
+    db: Session = Depends(get_db),
+):
+    try:
+        return get_latest_forecast_monitoring_summary(
+            db=db,
+            channel=channel,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/monitoring/by-date", response_model=ForecastMonitoringResponse)
+def forecast_monitoring_by_date(
+    forecast_date: date = Query(...),
+    channel: str = Query(default="Choice"),
+    db: Session = Depends(get_db),
+):
+    try:
+        return get_forecast_monitoring_by_date(
+            db=db,
+            channel=channel,
+            forecast_date=forecast_date,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/daily", response_model=ForecastApiResponse)
+def forecast_api_daily(
+    request: Request,
+    forecast_date: date = Query(...),
+    channel: str = Query(default="Choice"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        payload = get_daily_forecast_api_payload(
+            db=db,
+            channel=channel,
+            forecast_date=forecast_date,
+        )
+
+        log_api_access(
+            db=db,
+            username=current_user.username,
+            endpoint="/forecast/api/daily",
+            method="GET",
+            status_code=200,
+            channel=payload["channel"],
+            forecast_date=payload["date"],
+            client_ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+
+        return payload
+    except Exception as e:
+        log_api_access(
+            db=db,
+            username=current_user.username,
+            endpoint="/forecast/api/daily",
+            method="GET",
+            status_code=400,
+            channel=channel,
+            forecast_date=forecast_date,
+            client_ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
         raise HTTPException(status_code=400, detail=str(e))
