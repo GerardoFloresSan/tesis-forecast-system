@@ -23,7 +23,6 @@ from fastapi.testclient import TestClient
 
 from app.core.database import Base, SessionLocal, engine
 
-# Importar modelos para asegurar que las tablas se registren en Base.metadata
 from app.models.api_access_log import APIAccessLog
 from app.models.data_quality_report import DataQualityReport
 from app.models.etl_run import EtlRun
@@ -33,14 +32,15 @@ from app.models.forecast_run import ForecastRun
 from app.models.historical_interaction import HistoricalInteraction
 from app.models.model_train_run import ModelTrainRun
 from app.models.scheduler_job_run import SchedulerJobRun
+from app.models.sla_alert import SLAAlert
 from app.models.user import User
 
-# Routers
+from app.routers.alerts import router as alerts_router
 from app.routers.auth import router as auth_router
-from app.routers.upload import router as upload_router
-from app.routers.quality import router as quality_router
 from app.routers.forecast import router as forecast_router
 from app.routers.model import router as model_router
+from app.routers.quality import router as quality_router
+from app.routers.upload import router as upload_router
 
 
 def create_test_app() -> FastAPI:
@@ -50,6 +50,7 @@ def create_test_app() -> FastAPI:
     app.include_router(quality_router)
     app.include_router(forecast_router)
     app.include_router(model_router)
+    app.include_router(alerts_router)
     return app
 
 

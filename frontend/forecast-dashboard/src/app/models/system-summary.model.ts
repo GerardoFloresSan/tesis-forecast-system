@@ -143,3 +143,44 @@ export interface SchedulerJobHistoryItem {
   finished_at: string | null;
   created_at: string;
 }
+
+export interface ForecastMonitoringResponse {
+  channel: string;
+  forecast_run_id: number;
+  forecast_date: string;
+  forecast_created_at: string;
+  model_version: string | null;
+  forecast_total: number;
+  actual_total: number | null;
+  forecast_intervals_count: number;
+  actual_intervals_count: number;
+  deviation_percentage: number | null;
+  absolute_deviation_percentage: number | null;
+  error_level: string;
+  risk_level: string;
+  has_breach: boolean;
+  message: string;
+}
+
+export interface SLAAlertResponse {
+  id: number;
+  channel: string;
+  forecast_date: string;
+  forecast_run_id: number | null;
+  expected_volume: number;
+  actual_volume: number | null;
+  deviation_percentage: number | null;
+  absolute_deviation_percentage: number | null;
+  error_level: string;
+  risk_level: string;
+  has_breach: boolean;
+  status: string;
+  message: string;
+  email_sent: boolean;
+  email_recipient: string | null;
+  acknowledged_by: string | null;
+  acknowledged_at: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

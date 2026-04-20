@@ -3,23 +3,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import Base, SessionLocal, engine
 
 from app.models.api_access_log import APIAccessLog
-from app.models.user import User
-from app.models.etl_run import EtlRun
-from app.models.historical_interaction import HistoricalInteraction
-from app.models.external_variable import ExternalVariable
 from app.models.data_quality_report import DataQualityReport
-from app.models.forecast_run import ForecastRun
+from app.models.etl_run import EtlRun
+from app.models.external_variable import ExternalVariable
 from app.models.forecast_interval_run import ForecastIntervalRun
+from app.models.forecast_run import ForecastRun
+from app.models.historical_interaction import HistoricalInteraction
 from app.models.model_train_run import ModelTrainRun
 from app.models.scheduler_job_run import SchedulerJobRun
+from app.models.sla_alert import SLAAlert
+from app.models.user import User
 
+from app.routers.alerts import router as alerts_router
 from app.routers.auth import router as auth_router
-from app.routers.upload import router as upload_router
-from app.routers.quality import router as quality_router
 from app.routers.external_variables import router as external_variables_router
 from app.routers.forecast import router as forecast_router
-from app.routers.preprocessing import router as preprocessing_router
 from app.routers.model import router as model_router
+from app.routers.preprocessing import router as preprocessing_router
+from app.routers.quality import router as quality_router
+from app.routers.upload import router as upload_router
 
 from app.services.auth_service import ensure_default_user
 from app.services.scheduler_service import shutdown_scheduler, start_scheduler
@@ -46,6 +48,7 @@ app.include_router(external_variables_router)
 app.include_router(forecast_router)
 app.include_router(preprocessing_router)
 app.include_router(model_router)
+app.include_router(alerts_router)
 
 
 @app.on_event("startup")

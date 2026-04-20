@@ -4,7 +4,15 @@
       <h2>Dashboard ejecutivo</h2>
       <p>Resumen técnico-operativo del sistema de pronóstico</p>
     </div>
-    <button class="refresh-btn" (click)="loadSummary(); loadForecastHistory()">Actualizar</button>
+
+    <div class="hero-actions">
+      <button class="refresh-btn" (click)="loadSummary(); loadForecastHistory(); loadMonitoringSummary(); loadAlerts()">
+        Actualizar
+      </button>
+      <button class="refresh-btn refresh-btn-print" (click)="printDashboard()">
+        Exportar PDF
+      </button>
+    </div>
   </section>
 
   <section class="actions-panel">
@@ -162,6 +170,232 @@
           </div>
         </article>
       }
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading">
+        <h3>Pronóstico vs real y alertas</h3>
+        <p>Comparación operativa del forecast seleccionado, desviación porcentual y alertas SLA del canal.</p>
+      </div>
+
+      @if (monitoringLoading) {
+        <section class="state-box loading">
+          <span class="spinner"></span> Cargando comparación forecast vs real...
+        </section>
+      }
+      @if (monitoringError && !monitoringLoading) {
+        <section class="state-box error">{{ monitoringError }}</section>
+      }
+      @if (alertError && !alertsLoading) {
+        <section class="state-box error">{{ alertError }}</section>
+      }
+
+      <section class="grid comparison-grid">
+        <article class="card summary-mini-card summary-mini-card-purple">
+          <div class="card-section-title">Forecast esperado</div>
+          <h3>
+            @if (selectedMonitoring) {
+              {{ selectedMonitoring.forecast_total | number:'1.2-2' }}
+            } @else {
+              -
+            }
+          </h3>
+          <p class="executive-note">Volumen total pronosticado del día seleccionado.</p>
+        </article>
+
+        <article class="card summary-mini-card summary-mini-card-teal">
+          <div class="card-section-title">Volumen real</div>
+          <h3>
+            @if (selectedMonitoring?.actual_total !== null && selectedMonitoring?.actual_total !== undefined) {
+              {{ selectedMonitoring?.actual_total | number:'1.2-2' }}
+            } @else {
+              Sin data
+            }
+          </h3>
+          <p class="executive-note">Valor real encontrado en históricos para la misma fecha/canal.</p>
+        </article>
+
+        <article class="card summary-mini-card summary-mini-card-blue">
+          <div class="card-section-title">Desviación %</div>
+          <h3>
+            @if (selectedMonitoring?.deviation_percentage !== null && selectedMonitoring?.deviation_percentage !== undefined) {
+              {{ selectedMonitoring?.deviation_percentage | number:'1.2-2' }}%
+            } @else {
+              -
+            }
+          </h3>
+          <p class="executive-note">Brecha entre forecast y dato real del día operativo.</p>
+        </article>
+
+        <article class="card summary-mini-card summary-mini-card-slate">
+          <div class="card-section-title">Riesgo actual</div>
+          <h3>
+            <span class="monitoring-pill" [ngClass]="getRiskClass(selectedMonitoring?.risk_level)">
+              {{ selectedMonitoringRiskLabel }}
+            </span>
+          </h3>
+          <p class="executive-note">Clasificación automática basada en la desviación porcentual.</p>
+        </article>
+      </section>
+
+      <div class="activity-cards-grid activity-cards-grid-alerts">
+        <article class="card comparison-card">
+          <div class="history-header history-header-tight">
+            <div>
+              <h3>Comparación del día seleccionado</h3>
+              <p class="history-subtitle">Forecast vs real para la fecha operativa cargada.</p>
+            </div>
+            <div class="history-chip-stack">
+              <span class="section-chip section-chip-purple">{{ channel }}</span>
+              <span class="section-chip section-chip-slate">{{ selectedForecastDateLabel }}</span>
+            </div>
+          </div>
+
+          @if (selectedMonitoring) {
+            <div class="comparison-stack">
+              <div class="info-row">
+                <span>Forecast esperado</span>
+                <strong>{{ selectedMonitoring.forecast_total | number:'1.2-2' }}</strong>
+              </div>
+              <div class="info-row">
+                <span>Volumen real</span>
+                <strong>
+                  @if (selectedMonitoring.actual_total !== null && selectedMonitoring.actual_total !== undefined) {
+                    {{ selectedMonitoring.actual_total | number:'1.2-2' }}
+                  } @else {
+                    Sin data real
+                  }
+                </strong>
+              </div>
+              <div class="info-row">
+                <span>Slots forecast</span>
+                <strong>{{ selectedMonitoring.forecast_intervals_count }}</strong>
+              </div>
+              <div class="info-row">
+                <span>Slots reales</span>
+                <strong>{{ selectedMonitoring.actual_intervals_count }}</strong>
+              </div>
+              <div class="info-row">
+                <span>Error</span>
+                <strong>{{ selectedMonitoringErrorLabel }}</strong>
+              </div>
+              <div class="info-row">
+                <span>Riesgo</span>
+                <strong>
+                  <span class="monitoring-pill" [ngClass]="getRiskClass(selectedMonitoring.risk_level)">
+                    {{ selectedMonitoringRiskLabel }}
+                  </span>
+                </strong>
+              </div>
+              <div class="info-row">
+                <span>Mensaje</span>
+                <strong class="comparison-message">{{ selectedMonitoring.message }}</strong>
+              </div>
+            </div>
+          } @else {
+            <div class="empty-state-inline">No hay comparación cargada para la fecha seleccionada.</div>
+          }
+        </article>
+
+        <article class="card alerts-card">
+          <div class="history-header history-header-tight">
+            <div>
+              <h3>Alertas activas</h3>
+              <p class="history-subtitle">Riesgos abiertos del canal seleccionado.</p>
+            </div>
+            <div class="history-chip-stack">
+              <span class="section-chip section-chip-red">{{ activeCriticalAlertsCount }} críticas</span>
+              <span class="section-chip section-chip-slate">{{ activeAlertCount }} activas</span>
+            </div>
+          </div>
+
+          @if (alertsLoading) {
+            <div class="state-box loading inline-state-box">
+              <span class="spinner"></span> Cargando alertas...
+            </div>
+          } @else if (activeAlerts.length) {
+            <div class="alert-list">
+              @for (item of activeAlerts; track item.id) {
+                <div class="alert-item">
+                  <div class="alert-item-top">
+                    <strong>#{{ item.id }} · {{ item.forecast_date }}</strong>
+                    <span class="monitoring-pill" [ngClass]="getRiskClass(item.risk_level)">
+                      {{ item.risk_level }}
+                    </span>
+                  </div>
+                  <div class="alert-item-body">
+                    <span>Canal: <strong>{{ item.channel }}</strong></span>
+                    <span>
+                      Desviación:
+                      <strong>
+                        @if (item.deviation_percentage !== null && item.deviation_percentage !== undefined) {
+                          {{ item.deviation_percentage | number:'1.2-2' }}%
+                        } @else {
+                          -
+                        }
+                      </strong>
+                    </span>
+                  </div>
+                  <p class="alert-message">{{ item.message }}</p>
+                </div>
+              }
+            </div>
+          } @else {
+            <div class="empty-state-inline">No hay alertas activas para este canal.</div>
+          }
+        </article>
+      </div>
+
+      <article class="card history-card-clean">
+        <div class="history-header history-header-tight">
+          <div>
+            <h3>Historial de alertas</h3>
+            <p class="history-subtitle">Trazabilidad de alertas generadas, reconocidas o resueltas.</p>
+          </div>
+          <span class="section-chip section-chip-purple">{{ channel }}</span>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Fecha</th>
+                <th>Canal</th>
+                <th>Riesgo</th>
+                <th>Estado</th>
+                <th>Desviación %</th>
+                <th>Reconocida por</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (item of alertHistory; track item.id) {
+                <tr>
+                  <td>{{ item.id }}</td>
+                  <td>{{ item.forecast_date }}</td>
+                  <td>{{ item.channel }}</td>
+                  <td>
+                    <span class="monitoring-pill" [ngClass]="getRiskClass(item.risk_level)">
+                      {{ item.risk_level }}
+                    </span>
+                  </td>
+                  <td>{{ getAlertStatusLabel(item.status) }}</td>
+                  <td>
+                    @if (item.deviation_percentage !== null && item.deviation_percentage !== undefined) {
+                      {{ item.deviation_percentage | number:'1.2-2' }}%
+                    } @else {
+                      -
+                    }
+                  </td>
+                  <td>{{ item.acknowledged_by || '-' }}</td>
+                </tr>
+              } @empty {
+                <tr><td colspan="7" class="empty-row">No hay historial de alertas disponible.</td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </article>
     </section>
 
     <section class="section-block">
