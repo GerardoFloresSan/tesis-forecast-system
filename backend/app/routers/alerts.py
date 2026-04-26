@@ -17,8 +17,12 @@ from app.services.alert_service import (
     get_active_alerts,
     get_alert_history,
 )
+from fastapi import Depends
+from app.core.dependencies import get_current_user
+from app.models.user import User
 
-router = APIRouter(prefix="/alerts", tags=["Alerts"])
+current_user: User = Depends(get_current_user)
+router = APIRouter(prefix="/alerts", tags=["Alerts"], dependencies=[Depends(get_current_user)]    )
 
 
 @router.get("/active", response_model=list[SLAAlertResponse])

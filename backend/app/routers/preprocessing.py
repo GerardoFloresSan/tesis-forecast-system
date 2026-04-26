@@ -7,8 +7,11 @@ from app.services.preprocessing_service import (
     get_preprocessed_dataset,
     get_preprocessed_dataset_by_channel,
 )
+from fastapi import Depends
+from app.core.dependencies import get_current_user
+from app.models.user import User
 
-router = APIRouter(prefix="/forecast", tags=["Preprocessing"])
+router = APIRouter(prefix="/forecast", tags=["Preprocessing"], dependencies=[Depends(get_current_user)]    )
 
 
 @router.get("/preprocessed", response_model=list[PreprocessedDatasetRow])

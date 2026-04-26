@@ -35,8 +35,12 @@ from app.services.scheduler_service import (
     get_scheduler_job_history,
 )
 from app.services.system_summary_service import get_system_summary
+from fastapi import Depends
+from app.core.dependencies import get_current_user
+from app.models.user import User
 
-router = APIRouter(prefix="/model", tags=["Model"])
+current_user: User = Depends(get_current_user)
+router = APIRouter(prefix="/model", tags=["Model"], dependencies=[Depends(get_current_user)]    )
 
 CHANNEL_DESCRIPTION = "Canal para LSTM. Permitidos: Choice o España. También acepta 'espana'."
 

@@ -8,8 +8,13 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.schemas.upload import UploadSummary
 from app.services.etl_service import process_excel_and_save
+from fastapi import Depends
+from app.core.dependencies import get_current_user
+from app.models.user import User
 
-router = APIRouter(prefix="/upload", tags=["Upload"])
+
+current_user: User = Depends(get_current_user)
+router = APIRouter(prefix="/upload", tags=["Upload"], dependencies=[Depends(get_current_user)]    )
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 UPLOAD_DIR = BASE_DIR / "data" / "uploads"
