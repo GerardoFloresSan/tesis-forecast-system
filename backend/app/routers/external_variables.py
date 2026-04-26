@@ -12,8 +12,12 @@ from app.services.external_variable_service import (
     get_all_external_variables,
     get_external_variables_by_date,
 )
+from fastapi import Depends
+from app.core.dependencies import get_current_user
+from app.models.user import User
 
-router = APIRouter(prefix="/external-variables", tags=["External Variables"])
+
+router = APIRouter(prefix="/external-variables", tags=["External Variables"], dependencies=[Depends(get_current_user)]    )
 
 
 @router.post("/", response_model=ExternalVariableResponse)

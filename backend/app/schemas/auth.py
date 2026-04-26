@@ -1,9 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=3, max_length=100)
+    password: str = Field(..., min_length=6, max_length=100)
 
 
 class TokenResponse(BaseModel):
@@ -11,8 +11,13 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     username: str
+    full_name: str
+    role: str
 
 
 class CurrentUserResponse(BaseModel):
     id: int
     username: str
+    full_name: str
+    role: str
+    is_active: bool

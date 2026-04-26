@@ -1,9 +1,8 @@
-import base64
-import hashlib
-import hmac
-import json
-import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 
 from app.core.config import settings
 
@@ -12,93 +11,57 @@ class TokenValidationError(Exception):
     pass
 
 
-def _b64url_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
-
-
-def _b64url_decode(data: str) -> bytes:
-    padding = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(data + padding)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def get_password_hash(password: str) -> str:
-    digest = hashlib.sha256(password.encode("utf-8")).hexdigest()
-    return f"sha256${digest}"
+    return pwd_context.hash(password)
 
 
-def verify_password(plain_password: str, stored_password: str) -> bool:
-    if not stored_password:
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    if not plain_password or not hashed_password:
         return False
 
-    if stored_password.startswith("sha256$"):
-        expected = get_password_hash(plain_password)
-        return hmac.compare_digest(expected, stored_password)
-
-    return hmac.compare_digest(plain_password, stored_password)
+    return pwd_context.verify(plain_password, hashed_password)
 
 
-def create_access_token(subject: str, expires_minutes: int | None = None) -> str:
-    now = int(time.time())
-    exp_minutes = expires_minutes or settings.ACCESS_TOKEN_EXPIRE_MINUTES
-    exp = now + int(exp_minutes * 60)
+def create_access_token(
+    subject: str,
+    role: str,
+    expires_minutes: int | None = None,
+) -> str:
+    expire_minutes = expires_minutes or settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
-    header = {
-        "alg": "HS256",
-        "typ": "JWT",
-    }
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=expire_minutes)
+
     payload = {
         "sub": subject,
-        "iat": now,
-        "exp": exp,
+        "role": role,
+        "iat": int(now.timestamp()),
+        "exp": expire,
     }
 
-    header_segment = _b64url_encode(
-        json.dumps(header, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return jwt.encode(
+        payload,
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
     )
-    payload_segment = _b64url_encode(
-        json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    )
-
-    signing_input = f"{header_segment}.{payload_segment}".encode("utf-8")
-    signature = hmac.new(
-        settings.SECRET_KEY.encode("utf-8"),
-        signing_input,
-        hashlib.sha256,
-    ).digest()
-    signature_segment = _b64url_encode(signature)
-
-    return f"{header_segment}.{payload_segment}.{signature_segment}"
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
     try:
-        header_segment, payload_segment, signature_segment = token.split(".")
-    except ValueError as exc:
-        raise TokenValidationError("Token inválido.") from exc
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+        )
 
-    signing_input = f"{header_segment}.{payload_segment}".encode("utf-8")
-    expected_signature = hmac.new(
-        settings.SECRET_KEY.encode("utf-8"),
-        signing_input,
-        hashlib.sha256,
-    ).digest()
-    provided_signature = _b64url_decode(signature_segment)
+        username = payload.get("sub")
+        if not username:
+            raise TokenValidationError("Token sin usuario válido.")
 
-    if not hmac.compare_digest(expected_signature, provided_signature):
-        raise TokenValidationError("Firma del token inválida.")
+        return payload
 
-    try:
-        payload = json.loads(_b64url_decode(payload_segment).decode("utf-8"))
-    except Exception as exc:
-        raise TokenValidationError("Payload del token inválido.") from exc
-
-    exp = payload.get("exp")
-    sub = payload.get("sub")
-
-    if not sub:
-        raise TokenValidationError("Token sin sujeto válido.")
-
-    if exp is None or int(exp) < int(time.time()):
-        raise TokenValidationError("Token expirado.")
-
-    return payload
+    except JWTError as exc:
+        raise TokenValidationError("Token inválido o expirado.") from exc

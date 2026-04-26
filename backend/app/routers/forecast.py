@@ -29,8 +29,12 @@ from app.services.forecast_service import (
     get_forecast_history,
     get_interval_forecast_history,
 )
+from fastapi import Depends
+from app.core.dependencies import get_current_user
+from app.models.user import User
 
-router = APIRouter(prefix="/forecast", tags=["Forecast"])
+current_user: User = Depends(get_current_user)
+router = APIRouter(prefix="/forecast", tags=["Forecast"], dependencies=[Depends(get_current_user)]    )
 
 
 @router.get("/channels", response_model=list[str])

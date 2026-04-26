@@ -8,8 +8,12 @@ from app.core.database import get_db
 from app.schemas.quality import QualityReportResponse
 from app.services.quality_export_service import generate_quality_pdf
 from app.services.quality_service import generate_quality_report
+from fastapi import Depends
+from app.core.dependencies import get_current_user
+from app.models.user import User
 
-router = APIRouter(prefix="/quality", tags=["Quality"])
+current_user: User = Depends(get_current_user)
+router = APIRouter(prefix="/quality", tags=["Quality"], dependencies=[Depends(get_current_user)]    )
 
 
 @router.get("/health")

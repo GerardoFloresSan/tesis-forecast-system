@@ -1,0 +1,44 @@
+<div class="login-page">
+  <section class="login-card">
+    <div class="login-header">
+      <h1>Forecast System</h1>
+      <p>Sistema de pronóstico de volumen de interacciones</p>
+    </div>
+
+    <form class="login-form" (ngSubmit)="login()">
+      <label>
+        Usuario
+        <input
+          type="text"
+          name="username"
+          [(ngModel)]="username"
+          placeholder="analista"
+          autocomplete="username"
+        />
+      </label>
+
+      <label>
+        Contraseña
+        <input
+          type="password"
+          name="password"
+          [(ngModel)]="password"
+          placeholder="Ingrese su contraseña"
+          autocomplete="current-password"
+        />
+      </label>
+
+      <div class="error-message" *ngIf="errorMessage()">
+        {{ errorMessage() }}
+      </div>
+
+      <button type="submit" [disabled]="loading()">
+        {{ loading() ? 'Ingresando...' : 'Iniciar sesión' }}
+      </button>
+    </form>
+
+    <div class="login-footer">
+      <span>Acceso: Analista operativo</span>
+    </div>
+  </section>
+</div>
