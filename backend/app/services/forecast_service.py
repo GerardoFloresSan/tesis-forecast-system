@@ -7,7 +7,10 @@ from app.models.external_variable import ExternalVariable
 from app.models.forecast_interval_run import ForecastIntervalRun
 from app.models.forecast_run import ForecastRun
 from app.models.historical_interaction import HistoricalInteraction
-from app.services.lstm_service import predict_next_operational_day_for_channel
+from app.services.lstm_service import (
+    predict_next_operational_day_for_channel,
+    predict_operational_range_for_channel,
+)
 from app.utils.channel_rules import canonicalize_channel
 
 
@@ -160,6 +163,21 @@ def _serialize_interval_row(row: ForecastIntervalRun) -> dict:
     }
 
 
+def _forecast_day_exists(
+    db: Session,
+    channel: str,
+    forecast_date: date,
+) -> bool:
+    existing_interval = (
+        db.query(ForecastIntervalRun.id)
+        .filter(ForecastIntervalRun.channel == channel)
+        .filter(ForecastIntervalRun.forecast_date == forecast_date)
+        .first()
+    )
+
+    return existing_interval is not None
+
+
 def get_available_channels(db: Session) -> list[str]:
     rows = (
         db.query(HistoricalInteraction.channel)
@@ -243,8 +261,7 @@ def get_forecast_dataset_by_date(
     )
 
 
-def create_daily_forecast(db: Session, channel: str):
-    prediction_batch = predict_next_operational_day_for_channel(db, channel)
+def _persist_prediction_batch(db: Session, prediction_batch: dict) -> dict:
     canonical_channel = canonicalize_channel(prediction_batch["channel"])
     forecast_start_datetime = prediction_batch["forecast_start_datetime"]
     now_utc = datetime.utcnow()
@@ -285,11 +302,14 @@ def create_daily_forecast(db: Session, channel: str):
     interval_rows = []
 
     for item in prediction_batch["intervals"]:
-        aht_value = _get_latest_aht_for_interval(
-            db=db,
-            channel=canonical_channel,
-            interval_time=item["interval_time"],
-        )
+        aht_value = item.get("aht")
+
+        if aht_value is None:
+            aht_value = _get_latest_aht_for_interval(
+                db=db,
+                channel=canonical_channel,
+                interval_time=item["interval_time"],
+            )
 
         required_agents = _calculate_required_agents(
             forecast=item["predicted_value"],
@@ -314,7 +334,7 @@ def create_daily_forecast(db: Session, channel: str):
         )
 
     db.add_all(interval_rows)
-    db.commit()
+    db.flush()
     db.refresh(header_forecast)
 
     persisted_intervals = (
@@ -339,6 +359,93 @@ def create_daily_forecast(db: Session, channel: str):
     }
 
 
+def create_daily_forecast(db: Session, channel: str):
+    prediction_batch = predict_next_operational_day_for_channel(db, channel)
+    result = _persist_prediction_batch(db, prediction_batch)
+    db.commit()
+    return result
+
+
+def create_monthly_forecast(
+    db: Session,
+    channel: str,
+    start_date: date,
+    end_date: date,
+):
+    canonical_channel = canonicalize_channel(channel)
+
+    if end_date < start_date:
+        raise ValueError("La fecha fin no puede ser menor que la fecha inicio.")
+
+    prediction_batches = predict_operational_range_for_channel(
+        db=db,
+        channel=canonical_channel,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    forecasts = []
+    skipped_dates: list[str] = []
+
+    try:
+        for prediction_batch in prediction_batches:
+            forecast_day = prediction_batch["forecast_date"]
+
+            if _forecast_day_exists(
+                db=db,
+                channel=canonical_channel,
+                forecast_date=forecast_day,
+            ):
+                skipped_dates.append(str(forecast_day))
+                continue
+
+            forecasts.append(_persist_prediction_batch(db, prediction_batch))
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    total_predicted_value = float(sum(item["total_predicted_value"] for item in forecasts))
+    intervals_generated = int(sum(item["intervals_generated"] for item in forecasts))
+    days_generated = len(forecasts)
+    days_skipped = len(skipped_dates)
+    days_requested = len(prediction_batches)
+
+    if days_generated > 0 and days_skipped > 0:
+        operation = "monthly_forecast_partially_generated"
+        message = (
+            f"Forecast mensual generado parcialmente para el canal {canonical_channel}. "
+            f"Se generaron {days_generated} día(s) nuevo(s) y se omitieron {days_skipped} día(s) porque ya existían."
+        )
+    elif days_generated > 0:
+        operation = "monthly_forecast_generated"
+        message = (
+            f"Forecast mensual generado correctamente para el canal {canonical_channel} "
+            f"desde {start_date} hasta {end_date}."
+        )
+    else:
+        operation = "monthly_forecast_already_exists"
+        message = (
+            f"No se generaron nuevos registros. El forecast para el canal {canonical_channel} "
+            f"en el rango {start_date} al {end_date} ya existe."
+        )
+
+    return {
+        "channel": canonical_channel,
+        "start_date": start_date,
+        "end_date": end_date,
+        "days_requested": days_requested,
+        "days_generated": days_generated,
+        "days_skipped": days_skipped,
+        "skipped_dates": skipped_dates,
+        "intervals_generated": intervals_generated,
+        "total_predicted_value": total_predicted_value,
+        "operation": operation,
+        "message": message,
+        "forecasts": forecasts,
+    }
+
 def get_forecast_history(db: Session, channel: str | None = None, limit: int = 50):
     query = db.query(ForecastRun)
 
@@ -358,20 +465,39 @@ def get_interval_forecast_history(
     db: Session,
     channel: str | None = None,
     forecast_date: date | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
     limit: int = 2000,
 ):
     query = db.query(ForecastIntervalRun)
 
+    canonical_channel = None
     if channel:
         canonical_channel = canonicalize_channel(channel)
         query = query.filter(ForecastIntervalRun.channel == canonical_channel)
 
-    if forecast_date:
-        query = query.filter(ForecastIntervalRun.forecast_date == forecast_date)
+    if start_date and end_date:
+        if end_date < start_date:
+            raise ValueError("La fecha fin no puede ser menor que la fecha inicio.")
 
         rows = (
-            query.order_by(
-                ForecastIntervalRun.forecast_date.desc(),
+            query.filter(ForecastIntervalRun.forecast_date >= start_date)
+            .filter(ForecastIntervalRun.forecast_date <= end_date)
+            .order_by(
+                ForecastIntervalRun.forecast_date.asc(),
+                ForecastIntervalRun.slot_index.asc(),
+            )
+            .limit(limit)
+            .all()
+        )
+
+        return [_serialize_interval_row(row) for row in rows]
+
+    if forecast_date:
+        rows = (
+            query.filter(ForecastIntervalRun.forecast_date == forecast_date)
+            .order_by(
+                ForecastIntervalRun.forecast_date.asc(),
                 ForecastIntervalRun.slot_index.asc(),
             )
             .limit(limit)
@@ -382,7 +508,7 @@ def get_interval_forecast_history(
 
     latest_row_query = db.query(ForecastIntervalRun)
 
-    if channel:
+    if canonical_channel:
         latest_row_query = latest_row_query.filter(ForecastIntervalRun.channel == canonical_channel)
 
     latest_row = (

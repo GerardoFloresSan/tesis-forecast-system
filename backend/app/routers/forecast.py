@@ -12,6 +12,8 @@ from app.schemas.forecast import (
     ForecastDatasetRow,
     ForecastGenerateRequest,
     ForecastIntervalResponse,
+    ForecastMonthlyGenerateRequest,
+    ForecastMonthlyResponse,
     ForecastRunResponse,
 )
 from app.schemas.monitoring import ForecastMonitoringResponse
@@ -23,18 +25,19 @@ from app.services.forecast_monitoring_service import (
 )
 from app.services.forecast_service import (
     create_daily_forecast,
+    create_monthly_forecast,
     get_available_channels,
     get_forecast_dataset,
     get_forecast_dataset_by_date,
     get_forecast_history,
     get_interval_forecast_history,
 )
-from fastapi import Depends
-from app.core.dependencies import get_current_user
-from app.models.user import User
 
-current_user: User = Depends(get_current_user)
-router = APIRouter(prefix="/forecast", tags=["Forecast"], dependencies=[Depends(get_current_user)]    )
+router = APIRouter(
+    prefix="/forecast",
+    tags=["Forecast"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.get("/channels", response_model=list[str])
@@ -100,6 +103,38 @@ def generate_daily_forecast(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/monthly", response_model=ForecastMonthlyResponse)
+def generate_monthly_forecast(
+    payload: ForecastMonthlyGenerateRequest,
+    db: Session = Depends(get_db),
+):
+    try:
+        return create_monthly_forecast(
+            db=db,
+            channel=payload.channel,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/range", response_model=ForecastMonthlyResponse)
+def generate_range_forecast(
+    payload: ForecastMonthlyGenerateRequest,
+    db: Session = Depends(get_db),
+):
+    try:
+        return create_monthly_forecast(
+            db=db,
+            channel=payload.channel,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/history", response_model=list[ForecastRunResponse])
 def forecast_history(
     channel: str | None = Query(default=None),
@@ -116,7 +151,9 @@ def forecast_history(
 def forecast_interval_history(
     channel: str | None = Query(default=None),
     forecast_date: date | None = Query(default=None),
-    limit: int = Query(default=2000, ge=1, le=5000),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    limit: int = Query(default=5000, ge=1, le=10000),
     db: Session = Depends(get_db),
 ):
     try:
@@ -124,6 +161,8 @@ def forecast_interval_history(
             db=db,
             channel=channel,
             forecast_date=forecast_date,
+            start_date=start_date,
+            end_date=end_date,
             limit=limit,
         )
     except Exception as e:

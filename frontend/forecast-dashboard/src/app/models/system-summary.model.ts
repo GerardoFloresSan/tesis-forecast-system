@@ -187,3 +187,23 @@ export interface SLAAlertResponse {
   created_at: string;
   updated_at: string;
 }
+export interface ForecastMonthlyGenerateRequest {
+  channel: string;
+  start_date: string;
+  end_date: string;
+}
+
+export interface ForecastMonthlyResponse {
+  channel: string;
+  start_date: string;
+  end_date: string;
+  days_requested: number;
+  days_generated: number;
+  days_skipped: number;
+  skipped_dates: string[];
+  intervals_generated: number;
+  total_predicted_value: number;
+  operation: string;
+  message: string;
+  forecasts: ForecastBatchResponse[];
+}

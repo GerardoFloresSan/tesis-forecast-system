@@ -1,6 +1,6 @@
 from datetime import date, datetime, time
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ForecastDatasetRow(BaseModel):
@@ -22,6 +22,18 @@ class ForecastGenerateRequest(BaseModel):
     channel: str = Field(default="Choice", description="Canal a pronosticar")
 
 
+class ForecastMonthlyGenerateRequest(BaseModel):
+    channel: str = Field(default="Choice", description="Canal a pronosticar")
+    start_date: date = Field(..., description="Fecha inicial del rango mensual. Ejemplo: 2026-05-01")
+    end_date: date = Field(..., description="Fecha final del rango mensual. Ejemplo: 2026-05-31")
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if self.end_date < self.start_date:
+            raise ValueError("La fecha fin no puede ser menor que la fecha inicio.")
+        return self
+
+
 class ForecastRunResponse(BaseModel):
     id: int
     channel: str
@@ -41,11 +53,8 @@ class ForecastIntervalResponse(BaseModel):
     slot_index: int
     shift_label: str
     predicted_value: float
-
-    # Nuevos campos
     aht: float | None = None
     required_agents: int | None = None
-
     model_version: str | None = None
     created_at: datetime
 
@@ -62,6 +71,21 @@ class ForecastBatchResponse(BaseModel):
     operation: str
     message: str
     intervals: list[ForecastIntervalResponse]
+
+
+class ForecastMonthlyResponse(BaseModel):
+    channel: str
+    start_date: date
+    end_date: date
+    days_requested: int = 0
+    days_generated: int
+    days_skipped: int = 0
+    skipped_dates: list[str] = []
+    intervals_generated: int
+    total_predicted_value: float
+    operation: str
+    message: str
+    forecasts: list[ForecastBatchResponse]
 
 
 class ForecastApiResponse(BaseModel):
