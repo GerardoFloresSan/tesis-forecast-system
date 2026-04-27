@@ -546,7 +546,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return item.id === this.selectedForecastRunId;
   }
 
-    loadMonitoringSummary(silent: boolean = false): void {
+  loadMonitoringSummary(silent: boolean = false): void {
     if (!silent) {
       this.monitoringLoading = true;
       this.monitoringError = '';
@@ -789,25 +789,24 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
 
-  calculateRequiredAgents(forecast: number | string | null | undefined): number {
-  const forecastValue = Number(forecast ?? 0);
+  calculateRequiredAgents(
+    forecast: number | string | null | undefined,
+    aht: number | string | null | undefined
+  ): number {
+    const forecastValue = Number(forecast ?? 0);
+    const ahtValue = Number(aht ?? 0);
 
-  if (!forecastValue || forecastValue <= 0) {
-    return 0;
+    if (!forecastValue || forecastValue <= 0 || !ahtValue || ahtValue <= 0) {
+      return 0;
+    }
+
+    const slotDurationSeconds = 1800; // 30 minutos
+    const concurrency = 4; // chat concurrente
+
+    const workloadSeconds = forecastValue * ahtValue;
+    const requiredAgents = workloadSeconds / slotDurationSeconds / concurrency;
+
+    return Math.ceil(requiredAgents);
   }
 
-  /**
-   * Supuesto operativo:
-   * - Cada slot dura 30 minutos.
-   * - Cada asesor puede atender aprox. 10 interacciones por slot.
-   *
-   * Fórmula:
-   * asesores = forecast / productividad por asesor
-   */
-  const interactionsPerAgentPerSlot = 10;
-
-  return Math.ceil(forecastValue / interactionsPerAgentPerSlot);
-  }
-
-  
 }
