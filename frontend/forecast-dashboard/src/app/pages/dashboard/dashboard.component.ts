@@ -110,6 +110,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
   selectedForecastDate = '';
   selectedForecastRunId: number | null = null;
 
+  readonly pageSize = 10;
+  alertHistoryPage = 1;
+  forecastHistoryPage = 1;
+  forecastIntervalsPage = 1;
+
   autoRefreshEnabled = true;
   autoRefreshIntervalSeconds = 30;
   lastAutoRefreshAt: Date | null = null;
@@ -181,6 +186,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.forecastHistoryService.getHistory(this.channel, 20).subscribe({
       next: (items) => {
         this.forecastHistory = items;
+        this.forecastHistoryPage = 1;
 
         const availableDates = items
           .map((item) => this.extractDateOnly(item.forecast_date))
@@ -232,6 +238,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       .subscribe({
         next: (items) => {
           this.forecastIntervals = items.sort((a, b) => a.slot_index - b.slot_index);
+          this.forecastIntervalsPage = 1;
           if (silent) {
             this.lastAutoRefreshAt = new Date();
           }
@@ -336,6 +343,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
     return this.forecastHistory.find((item) => item.id === this.selectedForecastRunId) ?? this.forecastHistory[0] ?? null;
   }
+
+  get pagedAlertHistory(): SLAAlertResponse[] { return this.paginate(this.alertHistory, this.alertHistoryPage); }
+  get alertHistoryTotalPages(): number { return this.getTotalPages(this.alertHistory.length); }
+  get pagedForecastHistory(): ForecastHistoryItem[] { return this.paginate(this.forecastHistory, this.forecastHistoryPage); }
+  get forecastHistoryTotalPages(): number { return this.getTotalPages(this.forecastHistory.length); }
+  get pagedForecastIntervals(): ForecastIntervalHistoryItem[] { return this.paginate(this.forecastIntervals, this.forecastIntervalsPage); }
+  get forecastIntervalsTotalPages(): number { return this.getTotalPages(this.forecastIntervals.length); }
+
+  goToAlertHistoryPage(page: number): void { this.alertHistoryPage = this.clampPage(page, this.alertHistoryTotalPages); }
+  goToForecastHistoryPage(page: number): void { this.forecastHistoryPage = this.clampPage(page, this.forecastHistoryTotalPages); }
+  goToForecastIntervalsPage(page: number): void { this.forecastIntervalsPage = this.clampPage(page, this.forecastIntervalsTotalPages); }
 
   get selectedForecastDateLabel(): string {
     return this.formatDateOnly(this.selectedForecastDate);
@@ -528,7 +546,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return item.id === this.selectedForecastRunId;
   }
 
-    loadMonitoringSummary(silent: boolean = false): void {
+  loadMonitoringSummary(silent: boolean = false): void {
     if (!silent) {
       this.monitoringLoading = true;
       this.monitoringError = '';
@@ -668,6 +686,19 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return status || '-';
   }
 
+  private paginate<T>(items: T[], page: number): T[] {
+    const start = (page - 1) * this.pageSize;
+    return items.slice(start, start + this.pageSize);
+  }
+
+  private getTotalPages(totalItems: number): number {
+    return Math.max(1, Math.ceil(totalItems / this.pageSize));
+  }
+
+  private clampPage(page: number, totalPages: number): number {
+    return Math.min(Math.max(page, 1), totalPages);
+  }
+
   private startAutoRefresh(): void {
     this.stopAutoRefresh();
     if (!this.autoRefreshEnabled) return;
@@ -756,4 +787,26 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
     return `${parts[2]}/${parts[1]}/${parts[0]}`;
   }
+
+
+  calculateRequiredAgents(
+    forecast: number | string | null | undefined,
+    aht: number | string | null | undefined
+  ): number {
+    const forecastValue = Number(forecast ?? 0);
+    const ahtValue = Number(aht ?? 0);
+
+    if (!forecastValue || forecastValue <= 0 || !ahtValue || ahtValue <= 0) {
+      return 0;
+    }
+
+    const slotDurationSeconds = 1800; // 30 minutos
+    const concurrency = 4; // chat concurrente
+
+    const workloadSeconds = forecastValue * ahtValue;
+    const requiredAgents = workloadSeconds / slotDurationSeconds / concurrency;
+
+    return Math.ceil(requiredAgents);
+  }
+
 }

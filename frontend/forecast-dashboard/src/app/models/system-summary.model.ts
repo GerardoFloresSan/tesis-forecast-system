@@ -92,8 +92,11 @@ export interface ForecastIntervalHistoryItem {
   slot_index: number;
   shift_label: string;
   predicted_value: number;
+  aht?: number | null;
+  required_agents?: number | null;
   model_version: string | null;
   created_at: string;
+  
 }
 
 export interface ForecastBatchResponse {

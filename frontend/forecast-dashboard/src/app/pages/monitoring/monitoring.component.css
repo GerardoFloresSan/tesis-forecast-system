@@ -622,3 +622,23 @@
     grid-template-columns: 1fr;
   }
 }
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+.pagination-bar button {
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-radius: 999px;
+  padding: 7px 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.pagination-bar button:disabled { opacity: .45; cursor: not-allowed; }

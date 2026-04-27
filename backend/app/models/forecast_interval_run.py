@@ -13,12 +13,19 @@ class ForecastIntervalRun(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     forecast_run_id = Column(Integer, ForeignKey("forecast_runs.id"), nullable=False, index=True)
+
     channel = Column(String(50), nullable=False, index=True)
     forecast_date = Column(Date, nullable=False, index=True)
     forecast_datetime = Column(DateTime, nullable=False, index=True)
     interval_time = Column(Time, nullable=False)
     slot_index = Column(Integer, nullable=False)
     shift_label = Column(String(30), nullable=False)
+
     predicted_value = Column(Float, nullable=False)
+
+    # Nuevos campos para cálculo operativo de asesores
+    aht = Column(Float, nullable=True)
+    required_agents = Column(Integer, nullable=True)
+
     model_version = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

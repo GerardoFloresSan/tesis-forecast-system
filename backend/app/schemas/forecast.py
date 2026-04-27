@@ -41,6 +41,11 @@ class ForecastIntervalResponse(BaseModel):
     slot_index: int
     shift_label: str
     predicted_value: float
+
+    # Nuevos campos
+    aht: float | None = None
+    required_agents: int | None = None
+
     model_version: str | None = None
     created_at: datetime
 

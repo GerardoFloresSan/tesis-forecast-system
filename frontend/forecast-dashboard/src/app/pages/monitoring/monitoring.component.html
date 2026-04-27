@@ -109,7 +109,7 @@
               </tr>
             </thead>
             <tbody>
-              @for (item of forecastHistory; track item.id) {
+              @for (item of pagedForecastHistory; track item.id) {
                 <tr class="clickable-row" [class.selected-row]="isSelectedForecastRun(item)" (click)="selectForecastRun(item)">
                   <td>{{ item.id }}</td>
                   <td>{{ item.channel }}</td>
@@ -127,6 +127,11 @@
               }
             </tbody>
           </table>
+        </div>
+        <div class="pagination-bar" *ngIf="forecastHistory.length > pageSize">
+          <button type="button" [disabled]="forecastHistoryPage === 1" (click)="goToForecastHistoryPage(forecastHistoryPage - 1)">Anterior</button>
+          <span>{{ forecastHistoryPage }} / {{ forecastHistoryTotalPages }}</span>
+          <button type="button" [disabled]="forecastHistoryPage === forecastHistoryTotalPages" (click)="goToForecastHistoryPage(forecastHistoryPage + 1)">Siguiente</button>
         </div>
       </div>
 
@@ -188,7 +193,7 @@
               </tr>
             </thead>
             <tbody>
-              @for (item of forecastIntervals; track item.id) {
+              @for (item of pagedForecastIntervals; track item.id) {
                 <tr>
                   <td>{{ item.slot_index + 1 }}</td>
                   <td>{{ item.interval_time.slice(0, 5) }}</td>
@@ -209,6 +214,11 @@
               }
             </tbody>
           </table>
+        </div>
+        <div class="pagination-bar" *ngIf="forecastIntervals.length > pageSize">
+          <button type="button" [disabled]="forecastIntervalsPage === 1" (click)="goToForecastIntervalsPage(forecastIntervalsPage - 1)">Anterior</button>
+          <span>{{ forecastIntervalsPage }} / {{ forecastIntervalsTotalPages }}</span>
+          <button type="button" [disabled]="forecastIntervalsPage === forecastIntervalsTotalPages" (click)="goToForecastIntervalsPage(forecastIntervalsPage + 1)">Siguiente</button>
         </div>
       </div>
 
@@ -294,7 +304,7 @@
               </tr>
             </thead>
             <tbody>
-              @for (item of modelHistory; track item.id) {
+              @for (item of pagedModelHistory; track item.id) {
                 <tr>
                   <td>{{ item.id }}</td>
                   <td>{{ item.run_type }}</td>
@@ -314,6 +324,11 @@
               }
             </tbody>
           </table>
+        </div>
+        <div class="pagination-bar" *ngIf="modelHistory.length > pageSize">
+          <button type="button" [disabled]="modelHistoryPage === 1" (click)="goToModelHistoryPage(modelHistoryPage - 1)">Anterior</button>
+          <span>{{ modelHistoryPage }} / {{ modelHistoryTotalPages }}</span>
+          <button type="button" [disabled]="modelHistoryPage === modelHistoryTotalPages" (click)="goToModelHistoryPage(modelHistoryPage + 1)">Siguiente</button>
         </div>
       </div>
 
@@ -342,7 +357,7 @@
               </tr>
             </thead>
             <tbody>
-              @for (item of schedulerHistory; track item.id) {
+              @for (item of pagedSchedulerHistory; track item.id) {
                 <tr>
                   <td>{{ item.id }}</td>
                   <td>{{ item.job_name }}</td>
@@ -363,6 +378,11 @@
               }
             </tbody>
           </table>
+        </div>
+        <div class="pagination-bar" *ngIf="schedulerHistory.length > pageSize">
+          <button type="button" [disabled]="schedulerHistoryPage === 1" (click)="goToSchedulerHistoryPage(schedulerHistoryPage - 1)">Anterior</button>
+          <span>{{ schedulerHistoryPage }} / {{ schedulerHistoryTotalPages }}</span>
+          <button type="button" [disabled]="schedulerHistoryPage === schedulerHistoryTotalPages" (click)="goToSchedulerHistoryPage(schedulerHistoryPage + 1)">Siguiente</button>
         </div>
       </div>
     </section>

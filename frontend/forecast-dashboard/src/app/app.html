@@ -1,15 +1,29 @@
-<header class="app-header" *ngIf="authService.isAuthenticated()">
-  <div>
-    <strong>Forecast System</strong>
-    <span>
-      {{ authService.currentUser()?.full_name || 'Analista operativo' }}
-      · {{ authService.currentUser()?.role || 'analista_operativo' }}
-    </span>
-  </div>
+<ng-container *ngIf="authService.isAuthenticated(); else publicPage">
+  <aside class="app-sidebar">
+    <div class="sidebar-brand">
+      <strong>Forecast System</strong>
+      <span>{{ authService.currentUser()?.full_name || 'Analista operativo' }}</span>
+      <small>{{ authService.currentUser()?.role || 'analista_operativo' }}</small>
+    </div>
 
-  <button type="button" (click)="logout()">
-    Cerrar sesión
-  </button>
-</header>
+    <nav class="sidebar-nav" aria-label="Navegación principal">
+      <a routerLink="/dashboard" routerLinkActive="active">Dashboard</a>
+      <a routerLink="/monitoring" routerLinkActive="active">Monitoreo</a>
+      <a routerLink="/upload" routerLinkActive="active">Carga de datos</a>
+      <a routerLink="/external-variables" routerLinkActive="active">Variables externas</a>
+      <a routerLink="/quality" routerLinkActive="active">Calidad</a>
+    </nav>
 
-<router-outlet></router-outlet>
+    <button type="button" class="logout-button" (click)="logout()">
+      Cerrar sesión
+    </button>
+  </aside>
+
+  <main class="app-content">
+    <router-outlet></router-outlet>
+  </main>
+</ng-container>
+
+<ng-template #publicPage>
+  <router-outlet></router-outlet>
+</ng-template>

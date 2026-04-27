@@ -65,6 +65,12 @@ export class MonitoringComponent implements OnInit {
   selectedForecastDate = '';
   selectedForecastRunId: number | null = null;
 
+  readonly pageSize = 10;
+  forecastHistoryPage = 1;
+  forecastIntervalsPage = 1;
+  modelHistoryPage = 1;
+  schedulerHistoryPage = 1;
+
   ngOnInit(): void {
     this.loadChannels();
   }
@@ -99,6 +105,9 @@ export class MonitoringComponent implements OnInit {
       .subscribe({
         next: (response) => {
           this.forecastHistory = response.forecastHistory;
+          this.forecastHistoryPage = 1;
+          this.modelHistoryPage = 1;
+          this.schedulerHistoryPage = 1;
           this.modelHistory = response.modelHistory;
           this.schedulerHistory = response.schedulerHistory.filter(
             (item) => !item.channel || item.channel === this.channel
@@ -142,6 +151,7 @@ export class MonitoringComponent implements OnInit {
       .subscribe({
         next: (items) => {
           this.forecastIntervals = items.sort((a, b) => a.slot_index - b.slot_index);
+          this.forecastIntervalsPage = 1;
         },
         error: (error) => {
           console.error(error);
@@ -169,6 +179,20 @@ export class MonitoringComponent implements OnInit {
     this.selectedForecastRunId = item.id;
     this.loadIntervalHistory(forecastDate);
   }
+
+  get pagedForecastHistory(): ForecastHistoryItem[] { return this.paginate(this.forecastHistory, this.forecastHistoryPage); }
+  get forecastHistoryTotalPages(): number { return this.getTotalPages(this.forecastHistory.length); }
+  get pagedForecastIntervals(): ForecastIntervalHistoryItem[] { return this.paginate(this.forecastIntervals, this.forecastIntervalsPage); }
+  get forecastIntervalsTotalPages(): number { return this.getTotalPages(this.forecastIntervals.length); }
+  get pagedModelHistory(): LstmHistoryItem[] { return this.paginate(this.modelHistory, this.modelHistoryPage); }
+  get modelHistoryTotalPages(): number { return this.getTotalPages(this.modelHistory.length); }
+  get pagedSchedulerHistory(): SchedulerJobHistoryItem[] { return this.paginate(this.schedulerHistory, this.schedulerHistoryPage); }
+  get schedulerHistoryTotalPages(): number { return this.getTotalPages(this.schedulerHistory.length); }
+
+  goToForecastHistoryPage(page: number): void { this.forecastHistoryPage = this.clampPage(page, this.forecastHistoryTotalPages); }
+  goToForecastIntervalsPage(page: number): void { this.forecastIntervalsPage = this.clampPage(page, this.forecastIntervalsTotalPages); }
+  goToModelHistoryPage(page: number): void { this.modelHistoryPage = this.clampPage(page, this.modelHistoryTotalPages); }
+  goToSchedulerHistoryPage(page: number): void { this.schedulerHistoryPage = this.clampPage(page, this.schedulerHistoryTotalPages); }
 
   get selectedForecastDateLabel(): string {
     return this.formatDateOnly(this.selectedForecastDate);
@@ -269,6 +293,19 @@ export class MonitoringComponent implements OnInit {
       .map((value) => ({ y: +toY(value).toFixed(1), label: `${value}%` }));
 
     return { bars, hasData: true, thresholdY, gridLines, bottom };
+  }
+
+  private paginate<T>(items: T[], page: number): T[] {
+    const start = (page - 1) * this.pageSize;
+    return items.slice(start, start + this.pageSize);
+  }
+
+  private getTotalPages(totalItems: number): number {
+    return Math.max(1, Math.ceil(totalItems / this.pageSize));
+  }
+
+  private clampPage(page: number, totalPages: number): number {
+    return Math.min(Math.max(page, 1), totalPages);
   }
 
   private extractDateOnly(value: string | null | undefined): string | null {

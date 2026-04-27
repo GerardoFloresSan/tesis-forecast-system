@@ -1,0 +1,90 @@
+<section class="page-shell">
+  <div class="page-header">
+    <div>
+      <p class="eyebrow">Control operativo</p>
+      <h1>Calidad de datos</h1>
+      <p>Evalúa nulos, duplicados, cobertura temporal y consistencia por canal.</p>
+    </div>
+    <button type="button" class="primary" [disabled]="isLoading" (click)="loadReport()">
+      {{ isLoading ? 'Analizando...' : 'Ejecutar análisis de calidad' }}
+    </button>
+  </div>
+
+  <div class="loader" *ngIf="isLoading">Analizando calidad de datos...</div>
+  <div class="alert error" *ngIf="errorMessage">{{ errorMessage }}</div>
+
+  <div class="empty-state" *ngIf="!isLoading && !report && !errorMessage">
+    <h2>Ejecuta el análisis para visualizar el reporte</h2>
+    <p>El sistema calculará porcentajes, canales, nulos por columna e incidencias detectadas.</p>
+  </div>
+
+  <ng-container *ngIf="report">
+    <div class="status-card" [ngClass]="getRiskClass()">
+      <span>Estado general</span>
+      <strong>{{ getRiskStatus() }}</strong>
+      <p>Regla aplicada según el mayor riesgo entre nulos y duplicados.</p>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="metric-card"><span>% datos válidos</span><strong>{{ report.valid_percentage | number:'1.2-2' }}%</strong></div>
+      <div class="metric-card"><span>% datos nulos</span><strong>{{ report.missing_percentage | number:'1.2-2' }}%</strong></div>
+      <div class="metric-card"><span>% duplicados</span><strong>{{ report.duplicate_percentage | number:'1.2-2' }}%</strong></div>
+      <div class="metric-card"><span>Total registros</span><strong>{{ report.total_records | number }}</strong></div>
+    </div>
+
+    <div class="content-grid">
+      <article class="panel">
+        <h2>Rango de fechas</h2>
+        <p><strong>Inicio:</strong> {{ report.date_range.start_date ? (report.date_range.start_date | date:'dd/MM/yyyy') : 'Sin fecha' }}</p>
+        <p><strong>Fin:</strong> {{ report.date_range.end_date ? (report.date_range.end_date | date:'dd/MM/yyyy') : 'Sin fecha' }}</p>
+        <p><strong>Total días:</strong> {{ report.date_range.total_days }}</p>
+      </article>
+
+      <article class="panel">
+        <h2>Canales detectados</h2>
+        <div class="chips" *ngIf="report.detected_channels.length; else noChannels">
+          <span *ngFor="let channel of report.detected_channels">{{ channel }}</span>
+        </div>
+        <ng-template #noChannels><p>No se detectaron canales.</p></ng-template>
+      </article>
+
+      <article class="panel">
+        <h2>Registros por canal</h2>
+        <div class="list-row" *ngFor="let item of pagedRecordsByChannel">
+          <span>{{ item.key }}</span><strong>{{ item.value | number }}</strong>
+        </div>
+        <div class="pagination-bar mini" *ngIf="recordsByChannel.length > pageSize">
+          <button type="button" [disabled]="recordsByChannelPage === 1" (click)="goToRecordsByChannelPage(recordsByChannelPage - 1)">Anterior</button>
+          <span>{{ recordsByChannelPage }} / {{ recordsByChannelTotalPages }}</span>
+          <button type="button" [disabled]="recordsByChannelPage === recordsByChannelTotalPages" (click)="goToRecordsByChannelPage(recordsByChannelPage + 1)">Siguiente</button>
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2>Columnas con nulos</h2>
+        <div class="list-row" *ngFor="let item of pagedNullsByColumn">
+          <span>{{ item.key }}</span><strong>{{ item.value | number }}</strong>
+        </div>
+        <div class="pagination-bar mini" *ngIf="nullsByColumn.length > pageSize">
+          <button type="button" [disabled]="nullsByColumnPage === 1" (click)="goToNullsByColumnPage(nullsByColumnPage - 1)">Anterior</button>
+          <span>{{ nullsByColumnPage }} / {{ nullsByColumnTotalPages }}</span>
+          <button type="button" [disabled]="nullsByColumnPage === nullsByColumnTotalPages" (click)="goToNullsByColumnPage(nullsByColumnPage + 1)">Siguiente</button>
+        </div>
+        <p *ngIf="objectEntries(report.nulls_by_column).length === 0">No se encontraron nulos por columna.</p>
+      </article>
+    </div>
+
+    <article class="panel issues">
+      <h2>Issues detectados</h2>
+      <ul *ngIf="report.summary.issues.length; else noIssues">
+        <li *ngFor="let issue of pagedIssues">{{ issue }}</li>
+      </ul>
+      <div class="pagination-bar mini" *ngIf="report.summary.issues.length > pageSize">
+        <button type="button" [disabled]="issuesPage === 1" (click)="goToIssuesPage(issuesPage - 1)">Anterior</button>
+        <span>{{ issuesPage }} / {{ issuesTotalPages }}</span>
+        <button type="button" [disabled]="issuesPage === issuesTotalPages" (click)="goToIssuesPage(issuesPage + 1)">Siguiente</button>
+      </div>
+      <ng-template #noIssues><p>No se detectaron issues relevantes. Así sí da gusto, ni VAR se necesita.</p></ng-template>
+    </article>
+  </ng-container>
+</section>

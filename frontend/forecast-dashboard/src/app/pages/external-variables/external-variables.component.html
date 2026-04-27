@@ -1,0 +1,54 @@
+<section class="page-shell">
+  <div class="page-header">
+    <div>
+      <p class="eyebrow">Modelo predictivo</p>
+      <h1>Variables externas</h1>
+      <p>Consulta los factores que enriquecen el pronóstico: feriados, campañas y ausentismo.</p>
+    </div>
+    <button type="button" class="primary" [disabled]="isLoading" (click)="loadVariables()">
+      {{ isLoading ? 'Actualizando...' : 'Actualizar variables' }}
+    </button>
+  </div>
+
+  <div class="alert error" *ngIf="errorMessage">{{ errorMessage }}</div>
+  <div class="loader" *ngIf="isLoading">Cargando variables externas...</div>
+
+  <div class="table-card" *ngIf="!isLoading && variables.length > 0">
+    <table>
+      <thead>
+        <tr>
+          <th>Tipo de variable</th>
+          <th>Valor</th>
+          <th>Fecha</th>
+          <th>Descripción</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let item of pagedVariables">
+          <td>
+            <span class="badge" [ngClass]="getBadgeClass(item.variable_type)">
+              {{ getLabel(item.variable_type) }}
+            </span>
+          </td>
+          <td>{{ item.variable_value }}</td>
+          <td>{{ item.variable_date | date: 'dd/MM/yyyy' }}</td>
+          <td>{{ item.description || 'Sin descripción' }}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="pagination-bar" *ngIf="variables.length > pageSize">
+      <span>Mostrando {{ startItem }} - {{ endItem }} de {{ variables.length }}</span>
+      <div class="pagination-actions">
+        <button type="button" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)">Anterior</button>
+        <strong>Página {{ currentPage }} de {{ totalPages }}</strong>
+        <button type="button" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)">Siguiente</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="empty-state" *ngIf="!isLoading && !errorMessage && variables.length === 0">
+    <h2>No hay variables externas registradas</h2>
+    <p>Cuando existan feriados, campañas o tasas de ausentismo, aparecerán en esta sección.</p>
+  </div>
+</section>
