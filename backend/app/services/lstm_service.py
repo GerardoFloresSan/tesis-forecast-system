@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import joblib
@@ -510,29 +510,27 @@ def _build_aht_profile(base_df: pd.DataFrame, channel: str) -> dict:
     return profile
 
 
-def predict_next_operational_day_for_channel(db: Session, channel: str) -> dict:
+def _predict_operational_day_with_state(
+    *,
+    model,
+    y_scaler,
+    metadata: dict,
+    x_scaler,
+    base_df: pd.DataFrame,
+    channel: str,
+    forecast_date: date,
+    external_by_date: dict[date, dict[str, float]],
+    aht_profile: dict,
+) -> tuple[dict, pd.DataFrame]:
     canonical_channel = canonicalize_channel(channel)
-    model, scaler_bundle, metadata = load_lstm_artifacts(canonical_channel)
-
-    x_scaler = scaler_bundle["x_scaler"]
-    y_scaler = scaler_bundle["y_scaler"]
-
-    base_df = _prepare_channel_dataframe(db, canonical_channel)
-    feature_df = _add_features(base_df, canonical_channel)
-
-    external_by_date = _build_external_variables_by_date(db)
-    aht_profile = _build_aht_profile(base_df, canonical_channel)
-
-    last_datetime = base_df["datetime"].max().to_pydatetime()
-    forecast_date = get_next_operational_day_date(last_datetime, canonical_channel)
     forecast_slots = get_operational_day_datetimes(forecast_date, canonical_channel)
     forecast_start_datetime = get_operational_day_start_datetime(forecast_date, canonical_channel)
     external_vars = external_by_date.get(forecast_date, _default_external_variables())
     model_version = metadata.get("model_version", "lstm_v4_1_feature_pruned_late_uplift")
 
     intervals: list[dict] = []
-    recursive_base_df = base_df.copy()
-    recursive_feature_df = feature_df.copy()
+    recursive_base_df = base_df.copy().sort_values("datetime").reset_index(drop=True)
+    recursive_feature_df = _add_features(recursive_base_df, canonical_channel)
 
     for slot_index, slot_datetime in enumerate(forecast_slots):
         predicted_value = _predict_next_value(
@@ -548,6 +546,7 @@ def predict_next_operational_day_for_channel(db: Session, channel: str) -> dict:
 
         minute_of_day = slot_datetime.hour * 60 + slot_datetime.minute
         shift_label = get_shift_label(canonical_channel, minute_of_day)
+        aht_value = float(aht_profile.get(slot_index, 0.0))
 
         interval_payload = {
             "channel": canonical_channel,
@@ -557,6 +556,7 @@ def predict_next_operational_day_for_channel(db: Session, channel: str) -> dict:
             "slot_index": slot_index,
             "shift_label": shift_label,
             "predicted_value": predicted_value,
+            "aht": aht_value,
             "model_version": model_version,
         }
         intervals.append(interval_payload)
@@ -566,7 +566,7 @@ def predict_next_operational_day_for_channel(db: Session, channel: str) -> dict:
             "interval_time": slot_datetime.time(),
             "channel": canonical_channel,
             "volume": predicted_value,
-            "aht": float(aht_profile.get(slot_index, 0.0)),
+            "aht": aht_value,
             "datetime": slot_datetime,
             "is_holiday_peru": float(external_vars.get("is_holiday_peru", 0.0)),
             "is_holiday_spain": float(external_vars.get("is_holiday_spain", 0.0)),
@@ -582,16 +582,124 @@ def predict_next_operational_day_for_channel(db: Session, channel: str) -> dict:
 
     total_predicted_value = float(sum(item["predicted_value"] for item in intervals))
 
-    return {
-        "channel": canonical_channel,
-        "forecast_date": forecast_date,
-        "forecast_start_datetime": forecast_start_datetime,
-        "total_predicted_value": total_predicted_value,
-        "intervals_generated": len(intervals),
-        "intervals": intervals,
-        "model_version": model_version,
-    }
+    return (
+        {
+            "channel": canonical_channel,
+            "forecast_date": forecast_date,
+            "forecast_start_datetime": forecast_start_datetime,
+            "total_predicted_value": total_predicted_value,
+            "intervals_generated": len(intervals),
+            "intervals": intervals,
+            "model_version": model_version,
+        },
+        recursive_base_df,
+    )
 
+
+def predict_operational_day_for_channel(db: Session, channel: str, forecast_date: date) -> dict:
+    canonical_channel = canonicalize_channel(channel)
+    model, scaler_bundle, metadata = load_lstm_artifacts(canonical_channel)
+
+    x_scaler = scaler_bundle["x_scaler"]
+    y_scaler = scaler_bundle["y_scaler"]
+
+    base_df = _prepare_channel_dataframe(db, canonical_channel)
+    external_by_date = _build_external_variables_by_date(db)
+    aht_profile = _build_aht_profile(base_df, canonical_channel)
+
+    last_datetime = base_df["datetime"].max().to_pydatetime()
+    next_available_date = get_next_operational_day_date(last_datetime, canonical_channel)
+
+    if forecast_date < next_available_date:
+        raise ValueError(
+            f"No se puede generar forecast para {forecast_date}. "
+            f"La siguiente fecha pronosticable para el canal {canonical_channel} es {next_available_date}."
+        )
+
+    recursive_base_df = base_df.copy()
+    current_date = next_available_date
+    selected_batch: dict | None = None
+
+    while current_date <= forecast_date:
+        batch, recursive_base_df = _predict_operational_day_with_state(
+            model=model,
+            y_scaler=y_scaler,
+            metadata=metadata,
+            x_scaler=x_scaler,
+            base_df=recursive_base_df,
+            channel=canonical_channel,
+            forecast_date=current_date,
+            external_by_date=external_by_date,
+            aht_profile=aht_profile,
+        )
+        if current_date == forecast_date:
+            selected_batch = batch
+        current_date = current_date + timedelta(days=1)
+
+    if selected_batch is None:
+        raise ValueError(f"No se pudo generar forecast para {forecast_date}.")
+
+    return selected_batch
+
+
+def predict_operational_range_for_channel(
+    db: Session,
+    channel: str,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    if end_date < start_date:
+        raise ValueError("La fecha fin no puede ser menor que la fecha inicio.")
+
+    canonical_channel = canonicalize_channel(channel)
+    model, scaler_bundle, metadata = load_lstm_artifacts(canonical_channel)
+
+    x_scaler = scaler_bundle["x_scaler"]
+    y_scaler = scaler_bundle["y_scaler"]
+
+    base_df = _prepare_channel_dataframe(db, canonical_channel)
+    external_by_date = _build_external_variables_by_date(db)
+    aht_profile = _build_aht_profile(base_df, canonical_channel)
+
+    last_datetime = base_df["datetime"].max().to_pydatetime()
+    current_date = get_next_operational_day_date(last_datetime, canonical_channel)
+
+    if end_date < current_date:
+        raise ValueError(
+            f"No se puede generar forecast para el rango {start_date} al {end_date}. "
+            f"La siguiente fecha pronosticable para el canal {canonical_channel} es {current_date}."
+        )
+
+    recursive_base_df = base_df.copy()
+    batches: list[dict] = []
+
+    while current_date <= end_date:
+        batch, recursive_base_df = _predict_operational_day_with_state(
+            model=model,
+            y_scaler=y_scaler,
+            metadata=metadata,
+            x_scaler=x_scaler,
+            base_df=recursive_base_df,
+            channel=canonical_channel,
+            forecast_date=current_date,
+            external_by_date=external_by_date,
+            aht_profile=aht_profile,
+        )
+
+        if current_date >= start_date:
+            batches.append(batch)
+
+        current_date = current_date + timedelta(days=1)
+
+    return batches
+
+
+def predict_next_operational_day_for_channel(db: Session, channel: str) -> dict:
+    canonical_channel = canonicalize_channel(channel)
+    base_df = _prepare_channel_dataframe(db, canonical_channel)
+    last_datetime = base_df["datetime"].max().to_pydatetime()
+    forecast_date = get_next_operational_day_date(last_datetime, canonical_channel)
+    return predict_operational_day_for_channel(db, canonical_channel, forecast_date)
 
 def predict_next_volume_for_channel(db: Session, channel: str) -> dict:
     batch_prediction = predict_next_operational_day_for_channel(db, channel)

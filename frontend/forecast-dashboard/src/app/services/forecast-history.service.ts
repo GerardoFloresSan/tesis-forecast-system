@@ -38,4 +38,19 @@ export class ForecastHistoryService {
 
     return this.http.get<ForecastIntervalHistoryItem[]>(this.intervalHistoryUrl, { params });
   }
+
+  getIntervalHistoryByRange(
+    channel: string,
+    startDate: string,
+    endDate: string,
+    limit: number = 10000
+  ): Observable<ForecastIntervalHistoryItem[]> {
+    const params = new HttpParams()
+      .set('channel', channel)
+      .set('start_date', startDate)
+      .set('end_date', endDate)
+      .set('limit', limit);
+
+    return this.http.get<ForecastIntervalHistoryItem[]>(this.intervalHistoryUrl, { params });
+  }
 }

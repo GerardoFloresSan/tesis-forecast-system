@@ -1,0 +1,143 @@
+<section class="monthly-page">
+  <header class="page-header">
+    <div>
+      <span class="eyebrow">Forecast operativo</span>
+      <h1>Forecast mensual por intervalos</h1>
+      <p>
+        Genera y consulta el volumen pronosticado, AHT estimado y asesores requeridos por slot para un rango mensual.
+      </p>
+    </div>
+  </header>
+
+  <section class="filters-card">
+    <div class="filter-field">
+      <label for="channel">Canal</label>
+      <select id="channel" [(ngModel)]="selectedChannel">
+        @for (channel of channels; track channel) {
+          <option [value]="channel">{{ channel }}</option>
+        }
+      </select>
+    </div>
+
+    <div class="filter-field">
+      <label for="startDate">Fecha inicio</label>
+      <input id="startDate" type="date" [(ngModel)]="startDate" />
+    </div>
+
+    <div class="filter-field">
+      <label for="endDate">Fecha fin</label>
+      <input id="endDate" type="date" [(ngModel)]="endDate" />
+    </div>
+
+    <button type="button" class="primary-button" (click)="onSearch()" [disabled]="loading || generating">
+      Consultar
+    </button>
+
+    <button type="button" class="secondary-button" (click)="generateMonthlyForecast()" [disabled]="loading || generating">
+      @if (generating) {
+        Generando...
+      } @else {
+        Generar forecast mensual
+      }
+    </button>
+  </section>
+
+  @if (successMessage) {
+    <div class="success-message">{{ successMessage }}</div>
+  }
+
+  @if (errorMessage) {
+    <div class="error-message">{{ errorMessage }}</div>
+  }
+
+  <section class="kpi-grid">
+    <article class="kpi-card">
+      <span>Registros</span>
+      <strong>{{ totalRecords }}</strong>
+      <small>Slots encontrados</small>
+    </article>
+
+    <article class="kpi-card">
+      <span>Forecast total</span>
+      <strong>{{ totalForecast | number:'1.0-0' }}</strong>
+      <small>Volumen pronosticado</small>
+    </article>
+
+    <article class="kpi-card">
+      <span>AHT promedio</span>
+      <strong>{{ averageAht | number:'1.0-0' }}</strong>
+      <small>Segundos</small>
+    </article>
+
+    <article class="kpi-card">
+      <span>HC acumulado</span>
+      <strong>{{ totalRequiredAgents }}</strong>
+      <small>Asesores requeridos</small>
+    </article>
+  </section>
+
+  <section class="table-card">
+    <div class="table-header">
+      <div>
+        <h2>Detalle mensual por slot</h2>
+        <p>{{ startDate | date:'dd/MM/yyyy' }} - {{ endDate | date:'dd/MM/yyyy' }} · {{ selectedChannel }}</p>
+      </div>
+      <span>{{ totalRecords }} registros</span>
+    </div>
+
+    @if (loading) {
+      <div class="state-message">Cargando forecast mensual...</div>
+    }
+
+    @if (!loading && pagedForecastIntervals.length > 0) {
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Slot</th>
+              <th>Fecha</th>
+              <th>Hora</th>
+              <th>Turno</th>
+              <th>Forecast</th>
+              <th>AHT</th>
+              <th>Asesores requeridos</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            @for (item of pagedForecastIntervals; track item.id) {
+              <tr>
+                <td>{{ getDisplaySlot(item) }}</td>
+                <td>{{ item.forecast_date | date:'dd/MM/yyyy' }}</td>
+                <td>{{ formatTime(item.interval_time) }}</td>
+                <td><span class="shift-badge">{{ item.shift_label }}</span></td>
+                <td>{{ item.predicted_value | number:'1.0-0' }}</td>
+                <td>{{ item.aht | number:'1.0-0' }}</td>
+                <td><span class="hc-badge">{{ item.required_agents || 0 }}</span></td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+
+    @if (!loading && pagedForecastIntervals.length === 0) {
+      <div class="empty-state">
+        No existen pronósticos generados para el rango seleccionado. Ejecuta primero el forecast mensual.
+      </div>
+    }
+  </section>
+
+  @if (!loading && totalRecords > 0) {
+    <section class="pagination-card">
+      <span>Página {{ currentPage }} de {{ totalPages }}</span>
+
+      <div class="pagination-actions">
+        <button type="button" (click)="goToFirstPage()" [disabled]="!canGoPrevious">Primero</button>
+        <button type="button" (click)="previousPage()" [disabled]="!canGoPrevious">Anterior</button>
+        <button type="button" (click)="nextPage()" [disabled]="!canGoNext">Siguiente</button>
+        <button type="button" (click)="goToLastPage()" [disabled]="!canGoNext">Último</button>
+      </div>
+    </section>
+  }
+</section>

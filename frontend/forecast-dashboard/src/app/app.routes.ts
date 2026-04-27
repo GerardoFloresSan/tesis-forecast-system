@@ -6,6 +6,7 @@ import { MonitoringComponent } from './pages/monitoring/monitoring.component';
 import { UploadComponent } from './pages/upload/upload.component';
 import { ExternalVariablesComponent } from './pages/external-variables/external-variables.component';
 import { QualityComponent } from './pages/quality/quality.component';
+import { ForecastMonthlyIntervalsComponent } from './pages/forecast-monthly-intervals/forecast-monthly-intervals.component';
 import { authGuard } from './core/auth/auth.guard';
 
 export const routes: Routes = [
@@ -21,6 +22,11 @@ export const routes: Routes = [
   {
     path: 'monitoring',
     component: MonitoringComponent,
+    canActivate: [authGuard]
+  },
+  {
+    path: 'forecast-monthly-intervals',
+    component: ForecastMonthlyIntervalsComponent,
     canActivate: [authGuard]
   },
   {
