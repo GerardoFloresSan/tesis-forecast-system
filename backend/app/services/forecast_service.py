@@ -1,4 +1,6 @@
+import math
 from datetime import date, datetime
+
 from sqlalchemy.orm import Session
 
 from app.models.external_variable import ExternalVariable
@@ -38,6 +40,44 @@ def _default_external_variables() -> dict[str, float]:
     }
 
 
+def _calculate_required_agents(
+    forecast: float | None,
+    aht: float | None,
+    slot_duration_seconds: int = 1800,
+    concurrency: int = 4,
+) -> int:
+    forecast_value = float(forecast or 0)
+    aht_value = float(aht or 0)
+
+    if forecast_value <= 0 or aht_value <= 0:
+        return 0
+
+    workload_seconds = forecast_value * aht_value
+    required_agents = workload_seconds / slot_duration_seconds / concurrency
+
+    return math.ceil(required_agents)
+
+
+def _get_latest_aht_for_interval(
+    db: Session,
+    channel: str,
+    interval_time,
+) -> float | None:
+    row = (
+        db.query(HistoricalInteraction.aht)
+        .filter(HistoricalInteraction.channel == channel)
+        .filter(HistoricalInteraction.interval_time == interval_time)
+        .filter(HistoricalInteraction.aht.isnot(None))
+        .order_by(HistoricalInteraction.interaction_date.desc())
+        .first()
+    )
+
+    if not row:
+        return None
+
+    return float(row[0])
+
+
 def _build_external_variables_map(
     db: Session,
     start_date: date | None = None,
@@ -47,6 +87,7 @@ def _build_external_variables_map(
 
     if start_date:
         query = query.filter(ExternalVariable.variable_date >= start_date)
+
     if end_date:
         query = query.filter(ExternalVariable.variable_date <= end_date)
 
@@ -112,6 +153,8 @@ def _serialize_interval_row(row: ForecastIntervalRun) -> dict:
         "slot_index": row.slot_index,
         "shift_label": row.shift_label,
         "predicted_value": row.predicted_value,
+        "aht": row.aht,
+        "required_agents": row.required_agents,
         "model_version": row.model_version,
         "created_at": row.created_at,
     }
@@ -174,6 +217,7 @@ def get_forecast_dataset(
     )
 
     dataset = []
+
     for row in historical_rows:
         variables = external_map.get(row.interaction_date, _default_external_variables())
         dataset.append(_serialize_dataset_row(row, variables))
@@ -213,6 +257,7 @@ def create_daily_forecast(db: Session, channel: str):
     )
 
     operation = "created"
+
     if existing_forecast:
         existing_forecast.predicted_value = prediction_batch["total_predicted_value"]
         existing_forecast.model_version = prediction_batch["model_version"]
@@ -238,7 +283,19 @@ def create_daily_forecast(db: Session, channel: str):
         db.flush()
 
     interval_rows = []
+
     for item in prediction_batch["intervals"]:
+        aht_value = _get_latest_aht_for_interval(
+            db=db,
+            channel=canonical_channel,
+            interval_time=item["interval_time"],
+        )
+
+        required_agents = _calculate_required_agents(
+            forecast=item["predicted_value"],
+            aht=aht_value,
+        )
+
         interval_rows.append(
             ForecastIntervalRun(
                 forecast_run_id=header_forecast.id,
@@ -249,6 +306,8 @@ def create_daily_forecast(db: Session, channel: str):
                 slot_index=item["slot_index"],
                 shift_label=item["shift_label"],
                 predicted_value=item["predicted_value"],
+                aht=aht_value,
+                required_agents=required_agents,
                 model_version=item["model_version"],
                 created_at=now_utc,
             )
@@ -275,9 +334,7 @@ def create_daily_forecast(db: Session, channel: str):
         "model_version": header_forecast.model_version,
         "created_at": header_forecast.created_at,
         "operation": operation,
-        "message": (
-            f"Forecast operativo por intervalos {operation} correctamente para el canal {header_forecast.channel}."
-        ),
+        "message": f"Forecast operativo por intervalos {operation} correctamente para el canal {header_forecast.channel}.",
         "intervals": [_serialize_interval_row(row) for row in persisted_intervals],
     }
 
@@ -311,6 +368,7 @@ def get_interval_forecast_history(
 
     if forecast_date:
         query = query.filter(ForecastIntervalRun.forecast_date == forecast_date)
+
         rows = (
             query.order_by(
                 ForecastIntervalRun.forecast_date.desc(),
@@ -319,15 +377,20 @@ def get_interval_forecast_history(
             .limit(limit)
             .all()
         )
+
         return [_serialize_interval_row(row) for row in rows]
 
     latest_row_query = db.query(ForecastIntervalRun)
+
     if channel:
         latest_row_query = latest_row_query.filter(ForecastIntervalRun.channel == canonical_channel)
 
     latest_row = (
         latest_row_query
-        .order_by(ForecastIntervalRun.created_at.desc(), ForecastIntervalRun.forecast_datetime.desc())
+        .order_by(
+            ForecastIntervalRun.created_at.desc(),
+            ForecastIntervalRun.forecast_datetime.desc(),
+        )
         .first()
     )
 

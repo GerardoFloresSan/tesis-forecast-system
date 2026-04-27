@@ -278,15 +278,7 @@
               <div class="info-row">
                 <span>Error</span>
                 <strong>{{ selectedMonitoringErrorLabel }}</strong>
-              </div>
-              <div class="info-row">
-                <span>Riesgo</span>
-                <strong>
-                  <span class="monitoring-pill" [ngClass]="getRiskClass(selectedMonitoring.risk_level)">
-                    {{ selectedMonitoringRiskLabel }}
-                  </span>
-                </strong>
-              </div>
+              </div> 
               <div class="info-row">
                 <span>Mensaje</span>
                 <strong class="comparison-message">{{ selectedMonitoring.message }}</strong>
@@ -369,7 +361,7 @@
               </tr>
             </thead>
             <tbody>
-              @for (item of alertHistory; track item.id) {
+              @for (item of pagedAlertHistory; track item.id) {
                 <tr>
                   <td>{{ item.id }}</td>
                   <td>{{ item.forecast_date }}</td>
@@ -394,6 +386,11 @@
               }
             </tbody>
           </table>
+        </div>
+        <div class="pagination-bar" *ngIf="alertHistory.length > pageSize">
+          <button type="button" [disabled]="alertHistoryPage === 1" (click)="goToAlertHistoryPage(alertHistoryPage - 1)">Anterior</button>
+          <span>{{ alertHistoryPage }} / {{ alertHistoryTotalPages }}</span>
+          <button type="button" [disabled]="alertHistoryPage === alertHistoryTotalPages" (click)="goToAlertHistoryPage(alertHistoryPage + 1)">Siguiente</button>
         </div>
       </article>
     </section>
@@ -549,14 +546,6 @@
                 <span>Fecha forecast</span>
                 <strong>{{ summary.latest_forecast.forecast_date | limaDateTime }}</strong>
               </div>
-              <div class="info-row">
-                <span>Creado</span>
-                <strong>{{ summary.latest_forecast.created_at | limaDateTime }}</strong>
-              </div>
-              <div class="info-row">
-                <span>Versión del modelo</span>
-                <strong>{{ summary.latest_forecast.model_version || '-' }}</strong>
-              </div>
             </div>
           </article>
         }
@@ -600,11 +589,7 @@
               <div class="info-row">
                 <span>Canal</span>
                 <strong>{{ summary.latest_train_run.channel }}</strong>
-              </div>
-              <div class="info-row">
-                <span>Creado</span>
-                <strong>{{ summary.latest_train_run.created_at | limaDateTime }}</strong>
-              </div>
+              </div> 
             </div>
           </article>
         }
@@ -862,7 +847,7 @@
               </tr>
             </thead>
             <tbody>
-              @for (item of forecastHistory; track item.id) {
+              @for (item of pagedForecastHistory; track item.id) {
                 <tr class="clickable-row" [class.selected-row]="isSelectedForecastRun(item)" (click)="selectForecastRun(item)">
                   <td>{{ item.id }}</td>
                   <td>{{ item.channel }}</td>
@@ -881,6 +866,11 @@
             </tbody>
           </table>
         </div>
+        <div class="pagination-bar" *ngIf="forecastHistory.length > pageSize">
+          <button type="button" [disabled]="forecastHistoryPage === 1" (click)="goToForecastHistoryPage(forecastHistoryPage - 1)">Anterior</button>
+          <span>{{ forecastHistoryPage }} / {{ forecastHistoryTotalPages }}</span>
+          <button type="button" [disabled]="forecastHistoryPage === forecastHistoryTotalPages" (click)="goToForecastHistoryPage(forecastHistoryPage + 1)">Siguiente</button>
+        </div>
       </article>
 
       <article class="card history-card-clean">
@@ -896,40 +886,70 @@
         </div>
 
         <div class="table-wrapper">
-          <table class="data-table data-table-intervals">
-            <thead>
+        <table class="data-table data-table-intervals">
+          <thead>
+            <tr>
+              <th>Slot</th>
+              <th>Hora</th>
+              <th>Turno</th>
+              <th>Forecast</th>
+              <th>AHT</th>
+              <th>Asesores requeridos</th>
+              <th>Forecast datetime</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            @for (item of pagedForecastIntervals; track item.id) {
               <tr>
-                <th>Slot</th>
-                <th>Hora</th>
-                <th>Turno</th>
-                <th>Forecast</th>
-                <th>Forecast datetime</th>
-                <th>Modelo</th>
-                <th>Creado</th>
+                <td>{{ item.slot_index + 1 }}</td>
+
+                <td>{{ item.interval_time.slice(0, 5) }}</td>
+
+                <td>
+                  <span
+                    class="tag-pill"
+                    [class.tag-pill-morning]="item.shift_label === 'morning'"
+                    [class.tag-pill-afternoon]="item.shift_label === 'afternoon'"
+                  >
+                    {{ getShiftLabel(item.shift_label) }}
+                  </span>
+                </td>
+
+                <td>
+                  <span class="value-pill value-pill-purple">
+                    {{ item.predicted_value | number:'1.2-2' }}
+                  </span>
+                </td>
+
+                <td>
+                  <span class="value-pill value-pill-warning">
+                    {{ item.aht !== null && item.aht !== undefined ? (item.aht | number:'1.2-2') : '-' }}
+                  </span>
+                </td>
+
+                <td>
+                  <span class="value-pill value-pill-success">
+                    {{ item.required_agents ?? 0 }}
+                  </span>
+                </td>
+
+                <td>{{ item.forecast_datetime | limaDateTime }}</td>
               </tr>
-            </thead>
-            <tbody>
-              @for (item of forecastIntervals; track item.id) {
-                <tr>
-                  <td>{{ item.slot_index + 1 }}</td>
-                  <td>{{ item.interval_time.slice(0, 5) }}</td>
-                  <td>
-                    <span class="tag-pill" [class.tag-pill-morning]="item.shift_label === 'morning'" [class.tag-pill-afternoon]="item.shift_label === 'afternoon'">
-                      {{ getShiftLabel(item.shift_label) }}
-                    </span>
-                  </td>
-                  <td>
-                    <span class="value-pill value-pill-purple">{{ item.predicted_value | number:'1.2-2' }}</span>
-                  </td>
-                  <td>{{ item.forecast_datetime | limaDateTime }}</td>
-                  <td>{{ item.model_version || '-' }}</td>
-                  <td>{{ item.created_at | limaDateTime }}</td>
-                </tr>
-              } @empty {
-                <tr><td colspan="7" class="empty-row">No hay detalle por intervalos disponible.</td></tr>
-              }
-            </tbody>
-          </table>
+            } @empty {
+              <tr>
+                <td colspan="7" class="empty-row">
+                  No hay detalle por intervalos disponible.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+        </div>
+        <div class="pagination-bar" *ngIf="forecastIntervals.length > pageSize">
+          <button type="button" [disabled]="forecastIntervalsPage === 1" (click)="goToForecastIntervalsPage(forecastIntervalsPage - 1)">Anterior</button>
+          <span>{{ forecastIntervalsPage }} / {{ forecastIntervalsTotalPages }}</span>
+          <button type="button" [disabled]="forecastIntervalsPage === forecastIntervalsTotalPages" (click)="goToForecastIntervalsPage(forecastIntervalsPage + 1)">Siguiente</button>
         </div>
       </article>
     </section>

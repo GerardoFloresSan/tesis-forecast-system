@@ -1,0 +1,58 @@
+<section class="page-shell">
+  <div class="page-header">
+    <div>
+      <p class="eyebrow">Gestión de datos</p>
+      <h1>Carga de datos históricos</h1>
+      <p>Sube archivos Excel o CSV para alimentar el modelo de pronóstico.</p>
+    </div>
+  </div>
+
+  <div class="upload-card">
+    <div
+      class="dropzone"
+      [class.dragging]="isDragging"
+      (dragover)="onDragOver($event)"
+      (dragleave)="onDragLeave($event)"
+      (drop)="onDrop($event)"
+    >
+      <div class="drop-icon">⬆</div>
+      <h2>Selecciona o arrastra tu archivo</h2>
+      <p>Formatos permitidos: .xlsx, .xls y .csv</p>
+
+      <label class="file-button">
+        Elegir archivo
+        <input type="file" accept=".xlsx,.xls,.csv" (change)="onFileSelected($event)" hidden />
+      </label>
+
+      <div class="selected-file" *ngIf="selectedFile">
+        <span>Archivo seleccionado</span>
+        <strong>{{ selectedFile.name }}</strong>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="primary" [disabled]="!selectedFile || isLoading" (click)="upload()">
+        {{ isLoading ? 'Cargando...' : 'Cargar archivo' }}
+      </button>
+      <button type="button" class="secondary" [disabled]="isLoading" (click)="clear()">Limpiar</button>
+    </div>
+
+    <div class="loader" *ngIf="isLoading">Procesando archivo y aplicando limpieza automática...</div>
+    <div class="alert error" *ngIf="errorMessage">{{ errorMessage }}</div>
+  </div>
+
+  <div class="result-card" *ngIf="result">
+    <div class="alert success">{{ result.message }}</div>
+
+    <div class="result-grid">
+      <div><span>Archivo</span><strong>{{ result.file_name }}</strong></div>
+      <div><span>Hoja usada</span><strong>{{ result.sheet_used || 'No aplica' }}</strong></div>
+      <div><span>Modo de carga</span><strong>{{ result.load_mode }}</strong></div>
+      <div><span>Registros originales</span><strong>{{ result.records_original | number }}</strong></div>
+      <div><span>Duplicados removidos</span><strong>{{ result.duplicates_removed | number }}</strong></div>
+      <div><span>Nulos tratados</span><strong>{{ result.nulls_treated | number }}</strong></div>
+      <div><span>Registros reemplazados</span><strong>{{ result.records_replaced | number }}</strong></div>
+      <div><span>Registros finales</span><strong>{{ result.records_final | number }}</strong></div>
+    </div>
+  </div>
+</section>
