@@ -32,6 +32,7 @@
 }
 
 .filters-card,
+.status-card,
 .table-card,
 .pagination-card,
 .kpi-card {
@@ -106,6 +107,74 @@
   background: #cbd5e1;
   color: #64748b;
   cursor: not-allowed;
+}
+
+
+.status-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 18px 20px;
+  border-left: 6px solid #94a3b8;
+}
+
+.status-card strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.status-card p {
+  margin: 6px 0 0;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.status-eyebrow {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.status-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.status-metrics span {
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.status-complete {
+  border-left-color: #16a34a;
+  background: #f0fdf4;
+}
+
+.status-partial {
+  border-left-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.status-not_generated {
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+
+.status-neutral {
+  border-left-color: #94a3b8;
 }
 
 .success-message,
@@ -293,7 +362,8 @@ tbody tr:hover {
 }
 
 @media (max-width: 1100px) {
-  .filters-card {
+  .filters-card,
+  .status-card {
     align-items: stretch;
     flex-direction: column;
   }

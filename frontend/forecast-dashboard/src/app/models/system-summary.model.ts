@@ -207,3 +207,19 @@ export interface ForecastMonthlyResponse {
   message: string;
   forecasts: ForecastBatchResponse[];
 }
+
+
+export interface ForecastMonthlyStatusResponse {
+  channel: string;
+  start_date: string;
+  end_date: string;
+  requested_days: number;
+  generated_days: number;
+  missing_days: number;
+  total_intervals: number;
+  coverage_percentage: number;
+  status: 'complete' | 'partial' | 'not_generated';
+  message: string;
+  existing_dates: string[];
+  missing_dates: string[];
+}

@@ -88,6 +88,21 @@ class ForecastMonthlyResponse(BaseModel):
     forecasts: list[ForecastBatchResponse]
 
 
+class ForecastMonthlyStatusResponse(BaseModel):
+    channel: str
+    start_date: date
+    end_date: date
+    requested_days: int
+    generated_days: int
+    missing_days: int
+    total_intervals: int
+    coverage_percentage: float
+    status: str
+    message: str
+    existing_dates: list[str] = []
+    missing_dates: list[str] = []
+
+
 class ForecastApiResponse(BaseModel):
     date: date
     channel: str

@@ -14,6 +14,7 @@ from app.schemas.forecast import (
     ForecastIntervalResponse,
     ForecastMonthlyGenerateRequest,
     ForecastMonthlyResponse,
+    ForecastMonthlyStatusResponse,
     ForecastRunResponse,
 )
 from app.schemas.monitoring import ForecastMonitoringResponse
@@ -31,6 +32,7 @@ from app.services.forecast_service import (
     get_forecast_dataset_by_date,
     get_forecast_history,
     get_interval_forecast_history,
+    get_monthly_forecast_status,
 )
 
 router = APIRouter(
@@ -114,6 +116,24 @@ def generate_monthly_forecast(
             channel=payload.channel,
             start_date=payload.start_date,
             end_date=payload.end_date,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/monthly/status", response_model=ForecastMonthlyStatusResponse)
+def monthly_forecast_status(
+    channel: str = Query(default="Choice"),
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    db: Session = Depends(get_db),
+):
+    try:
+        return get_monthly_forecast_status(
+            db=db,
+            channel=channel,
+            start_date=start_date,
+            end_date=end_date,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

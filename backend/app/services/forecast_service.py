@@ -1,6 +1,7 @@
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.external_variable import ExternalVariable
@@ -177,6 +178,17 @@ def _forecast_day_exists(
 
     return existing_interval is not None
 
+
+
+def _build_date_range(start_date: date, end_date: date) -> list[date]:
+    days: list[date] = []
+    current_date = start_date
+
+    while current_date <= end_date:
+        days.append(current_date)
+        current_date = current_date + timedelta(days=1)
+
+    return days
 
 def get_available_channels(db: Session) -> list[str]:
     rows = (
@@ -444,6 +456,77 @@ def create_monthly_forecast(
         "operation": operation,
         "message": message,
         "forecasts": forecasts,
+    }
+
+
+def get_monthly_forecast_status(
+    db: Session,
+    channel: str,
+    start_date: date,
+    end_date: date,
+):
+    canonical_channel = canonicalize_channel(channel)
+
+    if end_date < start_date:
+        raise ValueError("La fecha fin no puede ser menor que la fecha inicio.")
+
+    requested_dates = _build_date_range(start_date, end_date)
+
+    existing_rows = (
+        db.query(
+            ForecastIntervalRun.forecast_date,
+            func.count(ForecastIntervalRun.id).label("intervals_count"),
+        )
+        .filter(ForecastIntervalRun.channel == canonical_channel)
+        .filter(ForecastIntervalRun.forecast_date >= start_date)
+        .filter(ForecastIntervalRun.forecast_date <= end_date)
+        .group_by(ForecastIntervalRun.forecast_date)
+        .order_by(ForecastIntervalRun.forecast_date.asc())
+        .all()
+    )
+
+    intervals_by_date = {row.forecast_date: int(row.intervals_count) for row in existing_rows}
+    existing_dates = [day for day in requested_dates if intervals_by_date.get(day, 0) > 0]
+    missing_dates = [day for day in requested_dates if intervals_by_date.get(day, 0) == 0]
+
+    requested_days = len(requested_dates)
+    generated_days = len(existing_dates)
+    missing_days = len(missing_dates)
+    total_intervals = sum(intervals_by_date.values())
+    coverage_percentage = round((generated_days / requested_days) * 100, 2) if requested_days else 0.0
+
+    if generated_days == 0:
+        status = "not_generated"
+        message = (
+            f"No existe forecast generado para el canal {canonical_channel} "
+            f"en el rango {start_date} al {end_date}."
+        )
+    elif missing_days == 0:
+        status = "complete"
+        message = (
+            f"El forecast mensual ya está completo para el canal {canonical_channel} "
+            f"en el rango {start_date} al {end_date}."
+        )
+    else:
+        status = "partial"
+        message = (
+            f"El forecast mensual está incompleto para el canal {canonical_channel}. "
+            f"Existen {generated_days} día(s) generados y faltan {missing_days} día(s)."
+        )
+
+    return {
+        "channel": canonical_channel,
+        "start_date": start_date,
+        "end_date": end_date,
+        "requested_days": requested_days,
+        "generated_days": generated_days,
+        "missing_days": missing_days,
+        "total_intervals": total_intervals,
+        "coverage_percentage": coverage_percentage,
+        "status": status,
+        "message": message,
+        "existing_dates": [str(day) for day in existing_dates],
+        "missing_dates": [str(day) for day in missing_dates],
     }
 
 def get_forecast_history(db: Session, channel: str | None = None, limit: int = 50):

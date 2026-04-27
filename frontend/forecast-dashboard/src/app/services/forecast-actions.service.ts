@@ -1,10 +1,13 @@
 import { inject, Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
+
 import {
   ForecastBatchResponse,
-  ForecastMonthlyResponse
+  ForecastMonthlyResponse,
+  ForecastMonthlyStatusResponse
 } from '../models/system-summary.model';
+
 import { environment } from '../../environments/environment';
 
 @Injectable({
@@ -28,5 +31,21 @@ export class ForecastActionsService {
       start_date: startDate,
       end_date: endDate
     });
+  }
+
+  getMonthlyForecastStatus(
+    channel: string,
+    startDate: string,
+    endDate: string
+  ): Observable<ForecastMonthlyStatusResponse> {
+    const params = new HttpParams()
+      .set('channel', channel)
+      .set('start_date', startDate)
+      .set('end_date', endDate);
+
+    return this.http.get<ForecastMonthlyStatusResponse>(
+      `${this.baseUrl}/monthly/status`,
+      { params }
+    );
   }
 }
