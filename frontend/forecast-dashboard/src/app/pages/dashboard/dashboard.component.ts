@@ -1,5 +1,6 @@
 import { CommonModule, DecimalPipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { finalize, forkJoin } from 'rxjs';
 import {
   ForecastBatchResponse,
@@ -68,7 +69,7 @@ interface MapeQuality {
 
 @Component({
   selector: 'app-dashboard',
-  imports: [CommonModule, DecimalPipe, LimaDateTimePipe],
+  imports: [CommonModule, DecimalPipe, LimaDateTimePipe, RouterLink],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.css'
 })
@@ -298,7 +299,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   checkAndRetrain(): void {
     this.executeAction(
-      () => this.modelActionsService.checkAndRetrain(this.channel, 15),
+      () => this.modelActionsService.checkAndRetrain(this.channel, 20),
       'Check & Retrain ejecutado correctamente.'
     );
   }
@@ -455,10 +456,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
 
     const fillWidth = Math.min(mape, 30) / 30 * 100;
-    if (mape < 10) return { label: 'Excelente', color: '#16a34a', bgColor: 'rgba(22, 163, 74, 0.08)', fillWidth };
-    if (mape < 15) return { label: 'Bueno', color: '#3b5bdb', bgColor: 'rgba(59, 91, 219, 0.08)', fillWidth };
-    if (mape < 20) return { label: 'Aceptable', color: '#ca8a04', bgColor: 'rgba(202, 138, 4, 0.08)', fillWidth };
-    return { label: 'Mejorable', color: '#dc2626', bgColor: 'rgba(220, 38, 38, 0.06)', fillWidth };
+    if (mape <= 15) return { label: 'Óptimo', color: '#16a34a', bgColor: 'rgba(22, 163, 74, 0.08)', fillWidth };
+    if (mape <= 20) return { label: 'Aceptable', color: '#ca8a04', bgColor: 'rgba(202, 138, 4, 0.08)', fillWidth };
+    return { label: 'Deficiente', color: '#dc2626', bgColor: 'rgba(220, 38, 38, 0.06)', fillWidth };
   }
 
   get forecastChartData(): ForecastChartData {

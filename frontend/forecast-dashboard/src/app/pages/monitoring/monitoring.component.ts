@@ -11,6 +11,8 @@ import { ForecastHistoryService } from '../../services/forecast-history.service'
 import { ModelHistoryService } from '../../services/model-history.service';
 import { SchedulerJobHistoryService } from '../../services/scheduler-job-history.service';
 import { ChannelService } from '../../services/channel.service';
+import { ModelActionsService } from '../../services/model-actions.service';
+import { ForecastActionsService } from '../../services/forecast-actions.service';
 import { LimaDateTimePipe } from '../../shared/pipes/lima-datetime.pipe';
 
 interface MapeBar {
@@ -48,6 +50,9 @@ export class MonitoringComponent implements OnInit {
   private readonly modelHistoryService = inject(ModelHistoryService);
   private readonly schedulerJobHistoryService = inject(SchedulerJobHistoryService);
   private readonly channelService = inject(ChannelService);
+  private readonly modelActionsService = inject(ModelActionsService);
+  private readonly forecastActionsService = inject(ForecastActionsService);
+  private readonly forecastEnabledChannels = ['choice', 'espana'];
 
   availableChannels: string[] = [];
   channel = 'Choice';
@@ -63,6 +68,10 @@ export class MonitoringComponent implements OnInit {
   intervalError = '';
   lastRefreshAt: Date | null = null;
   selectedForecastDate = '';
+
+  actionLoading = false;
+  actionMessage = '';
+  actionError = '';
   selectedForecastRunId: number | null = null;
 
   readonly pageSize = 10;
@@ -180,6 +189,43 @@ export class MonitoringComponent implements OnInit {
     this.loadIntervalHistory(forecastDate);
   }
 
+
+  trainLstm(): void {
+    this.executeAction(
+      () => this.modelActionsService.trainLstm(this.channel),
+      'Entrenamiento LSTM ejecutado correctamente.'
+    );
+  }
+
+  retrainLstm(): void {
+    this.executeAction(
+      () => this.modelActionsService.retrainLstm(this.channel),
+      'Reentrenamiento LSTM ejecutado correctamente.'
+    );
+  }
+
+  checkAndRetrain(): void {
+    this.executeAction(
+      () => this.modelActionsService.checkAndRetrain(this.channel, 20),
+      'Check & Retrain ejecutado correctamente.'
+    );
+  }
+
+  generateForecast(): void {
+    this.executeAction(
+      () => this.forecastActionsService.generateDailyForecast(this.channel),
+      'Forecast manual generado correctamente.'
+    );
+  }
+
+  get modelActionsDisabled(): boolean {
+    return !this.isForecastChannelEnabled(this.channel);
+  }
+
+  get forecastActionsDisabled(): boolean {
+    return !this.isForecastChannelEnabled(this.channel);
+  }
+
   get pagedForecastHistory(): ForecastHistoryItem[] { return this.paginate(this.forecastHistory, this.forecastHistoryPage); }
   get forecastHistoryTotalPages(): number { return this.getTotalPages(this.forecastHistory.length); }
   get pagedForecastIntervals(): ForecastIntervalHistoryItem[] { return this.paginate(this.forecastIntervals, this.forecastIntervalsPage); }
@@ -265,9 +311,8 @@ export class MonitoringComponent implements OnInit {
       const height = bottom - y;
 
       let color: string;
-      if (mapeValue < 10) color = '#15803d';
-      else if (mapeValue < 15) color = '#2563eb';
-      else if (mapeValue < 20) color = '#b45309';
+      if (mapeValue <= 15) color = '#15803d';
+      else if (mapeValue <= 20) color = '#b45309';
       else color = '#b91c1c';
 
       const maxLabels = 8;
@@ -286,13 +331,45 @@ export class MonitoringComponent implements OnInit {
       };
     });
 
-    const thresholdY = +toY(15).toFixed(1);
+    const thresholdY = +toY(20).toFixed(1);
 
     const gridLines: GridLine[] = [0, 10, 20]
       .filter((value) => value <= maxMape + 2)
       .map((value) => ({ y: +toY(value).toFixed(1), label: `${value}%` }));
 
     return { bars, hasData: true, thresholdY, gridLines, bottom };
+  }
+
+
+  private executeAction(requestFactory: () => any, successFallbackMessage: string): void {
+    this.actionLoading = true;
+    this.actionMessage = '';
+    this.actionError = '';
+
+    requestFactory()
+      .pipe(finalize(() => (this.actionLoading = false)))
+      .subscribe({
+        next: (response: any) => {
+          this.actionMessage = response?.message || response?.detail || successFallbackMessage;
+          this.loadMonitoring();
+        },
+        error: (error: any) => {
+          console.error(error);
+          this.actionError = error?.error?.detail || 'Ocurrió un error al ejecutar la acción del modelo.';
+        }
+      });
+  }
+
+  private isForecastChannelEnabled(channel: string): boolean {
+    return this.forecastEnabledChannels.includes(this.normalizeChannel(channel));
+  }
+
+  private normalizeChannel(channel: string | null | undefined): string {
+    return (channel || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
   }
 
   private paginate<T>(items: T[], page: number): T[] {

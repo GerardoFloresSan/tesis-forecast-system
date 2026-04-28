@@ -213,7 +213,7 @@ button:disabled {
 
 /* ── GRID ── */
 .grid { display: grid; gap: var(--space-4); }
-.summary-grid-executive { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.summary-grid-executive { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .comparison-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .operational-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .details-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -256,6 +256,8 @@ button:disabled {
 .executive-card-scheduler::before { background: var(--success); }
 .executive-card-mape::before { background: var(--warning); }
 .executive-card-forecast::before { background: var(--purple); }
+.executive-card-actual::before { background: var(--teal); }
+.executive-card-risk::before { background: var(--text-tertiary); }
 
 .summary-mini-card-purple::before { background: var(--purple); }
 .summary-mini-card-teal::before { background: var(--teal); }
@@ -313,6 +315,8 @@ button:disabled {
 .executive-badge-red, .risk-critical, .status-failed { background: var(--danger-subtle); color: var(--danger); border-color: var(--danger-border); }
 .executive-badge-amber, .risk-warning { background: var(--warning-subtle); color: var(--warning); border-color: var(--warning-border); }
 .executive-badge-purple, .section-chip-purple, .value-pill-purple { background: var(--purple-subtle); color: var(--purple); border-color: var(--purple-border); }
+.executive-badge-teal { background: var(--teal-subtle); color: var(--teal); border-color: var(--teal-border); }
+.executive-badge-slate { background: var(--bg-elevated); color: var(--text-secondary); border-color: var(--border-default); }
 .section-chip-red { background: var(--danger-subtle); color: var(--danger); border-color: var(--danger-border); }
 .featured-chip { background: var(--purple-subtle); color: var(--purple); border-color: var(--purple-border); }
 .featured-chip-teal { background: var(--teal-subtle); color: var(--teal); border-color: var(--teal-border); }
@@ -607,4 +611,59 @@ button:disabled {
   .hero { position: static; border: none; }
   .page { padding: 0; }
   .card { box-shadow: none; break-inside: avoid; }
+}
+
+/* ── QUICK ACCESS ── */
+.section-chip-blue {
+  background: var(--info-subtle);
+  color: var(--info);
+  border-color: var(--info-border);
+}
+
+.quick-access-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.quick-access-card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  text-decoration: none;
+  color: inherit;
+}
+
+.quick-access-card strong {
+  color: var(--text-primary);
+  font-size: var(--text-lg);
+  line-height: 1.2;
+}
+
+.quick-access-card p {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.dashboard-control-panel {
+  margin-bottom: var(--space-5);
+}
+
+@media (max-width: 1280px) {
+  .quick-access-grid { grid-template-columns: 1fr; }
+}
+
+.alerts-card-compact {
+  min-height: auto;
+}
+
+.alerts-card-compact .alert-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+@media (max-width: 1180px) {
+  .summary-grid-executive { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
