@@ -642,3 +642,69 @@
   cursor: pointer;
 }
 .pagination-bar button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ── Model actions moved from Dashboard ── */
+.model-actions-panel {
+  padding: 22px 24px;
+  border: 1px solid rgba(203, 213, 225, 0.78);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+}
+
+.model-actions-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.model-actions-header h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.model-actions-header p,
+.action-note {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.model-actions-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.model-action-button {
+  border: none;
+  border-radius: 14px;
+  padding: 11px 16px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+.model-action-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.16);
+}
+
+.model-action-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.model-action-button.primary { background: #2563eb; color: #fff; }
+.model-action-button.success { background: #dcfce7; color: #15803d; }
+.model-action-button.dark { background: #0f172a; color: #fff; }
+.model-action-button.warning { background: #fef3c7; color: #b45309; }
+.state-box.success { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }

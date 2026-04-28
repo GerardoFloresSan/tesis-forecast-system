@@ -18,7 +18,7 @@ export class ModelActionsService {
     return this.http.post(`${this.baseUrl}/retrain-lstm?channel=${channel}`, {});
   }
 
-  checkAndRetrain(channel: string = 'Choice', thresholdMape: number = 15): Observable<any> {
+  checkAndRetrain(channel: string = 'Choice', thresholdMape: number = 20): Observable<any> {
     return this.http.post(
       `${this.baseUrl}/check-and-retrain-lstm?channel=${channel}&threshold_mape=${thresholdMape}`,
       {}

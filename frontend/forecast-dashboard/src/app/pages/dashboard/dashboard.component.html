@@ -1,32 +1,26 @@
-<!-- ═══════════════════════════════════════════════════════════
-     DASHBOARD — Template (Light Vercel/Linear aesthetic)
-     100% logic preserved. Visual refinements only.
-     ═══════════════════════════════════════════════════════════ -->
-
 <div class="page">
-  <!-- ── HERO ── -->
   <header class="hero">
     <div>
       <h2>Dashboard ejecutivo</h2>
-      <p>Resumen técnico-operativo del sistema de pronóstico</p>
+      <p>Vista resumida para toma de decisiones WFM: forecast, error, riesgo y cobertura operativa.</p>
     </div>
     <div class="hero-actions">
       <button class="refresh-btn" (click)="loadSummary(); loadForecastHistory(); loadMonitoringSummary(); loadAlerts()">
         Actualizar
       </button>
       <button class="refresh-btn refresh-btn-print" (click)="printDashboard()">
-        Exportar PDF
+        Imprimir / Exportar PDF
       </button>
     </div>
   </header>
 
-  <!-- ── ACTIONS PANEL ── -->
-  <section class="actions-panel">
+  <section class="actions-panel dashboard-control-panel">
     <div class="actions-header">
       <div>
-        <h3>Acciones del modelo</h3>
-        <span>Hora en formato Lima, Perú</span>
+        <h3>Vista ejecutiva</h3>
+        <span>El detalle técnico se mantiene en Monitoreo y Forecast mensual.</span>
       </div>
+
       <div class="header-controls">
         <div class="channel-selector">
           <label for="channelSelect">Canal</label>
@@ -36,6 +30,7 @@
             }
           </select>
         </div>
+
         <div class="auto-refresh-box">
           <span class="auto-refresh-label">
             Auto refresh:
@@ -50,42 +45,36 @@
       </div>
     </div>
 
-    <div class="actions-buttons">
-      <button class="action-btn primary" (click)="trainLstm()" [disabled]="actionLoading || modelActionsDisabled">Entrenar LSTM</button>
-      <button class="action-btn secondary" (click)="retrainLstm()" [disabled]="actionLoading || modelActionsDisabled">Reentrenar LSTM</button>
-      <button class="action-btn dark" (click)="checkAndRetrain()" [disabled]="actionLoading || modelActionsDisabled">Check &amp; Retrain</button>
-      <button class="action-btn forecast" (click)="generateForecast()" [disabled]="actionLoading || forecastActionsDisabled">Generar Forecast</button>
-    </div>
-
-    <div class="auto-refresh-status">
-      Intervalo: {{ autoRefreshIntervalSeconds }}s
-      @if (lastAutoRefreshAt) { · Última: {{ lastAutoRefreshAt | limaDateTime }} }
-    </div>
-
-    @if (modelActionsDisabled) {
-      <div class="state-box loading action-box">Acciones habilitadas para los canales Choice y España.</div>
-    }
-    @if (actionLoading) {
-      <div class="state-box loading action-box"><span class="spinner"></span> Ejecutando acción…</div>
-    }
-    @if (actionMessage && !actionLoading) {
-      <div class="state-box success action-box">{{ actionMessage }}</div>
-    }
-    @if (actionError && !actionLoading) {
-      <div class="state-box error action-box">{{ actionError }}</div>
+    @if (lastAutoRefreshAt) {
+      <div class="auto-refresh-status">
+        Última actualización automática: <strong>{{ lastAutoRefreshAt | limaDateTime }}</strong>
+      </div>
     }
   </section>
 
   @if (loading) {
-    <section class="state-box loading"><span class="spinner"></span> Cargando resumen del sistema…</section>
+    <section class="state-box loading">
+      <span class="spinner"></span> Cargando resumen ejecutivo…
+    </section>
   }
+
   @if (errorMessage && !loading) {
     <section class="state-box error">{{ errorMessage }}</section>
   }
 
-  @if (summary && !loading) {
+  @if (actionMessage) {
+    <section class="state-box success">{{ actionMessage }}</section>
+  }
 
-    <!-- ── EXECUTIVE KPIs ── -->
+  @if (actionError) {
+    <section class="state-box error">{{ actionError }}</section>
+  }
+
+  @if (!summary && !loading && !errorMessage) {
+    <section class="state-box error">No hay información disponible para el canal seleccionado.</section>
+  }
+
+  @if (summary) {
     <section class="grid summary-grid-executive">
       <article class="card executive-card executive-card-channel">
         <div class="executive-top">
@@ -94,7 +83,7 @@
         </div>
         <div class="executive-body">
           <h3>{{ summary.channel }}</h3>
-          <p class="executive-note">Canal seleccionado para entrenamiento, forecast y monitoreo.</p>
+          <p class="executive-note">Canal usado para forecast, monitoreo y alertas.</p>
         </div>
       </article>
 
@@ -109,7 +98,7 @@
           <h3 [class.ok]="summary.scheduler_status.running">
             {{ summary.scheduler_status.running ? 'Activo' : 'Inactivo' }}
           </h3>
-          <p class="executive-note">{{ summary.scheduler_status.running ? 'Ejecutando tareas programadas.' : 'No hay tareas en ejecución.' }}</p>
+          <p class="executive-note">Estado de tareas automáticas del sistema.</p>
         </div>
       </article>
 
@@ -125,7 +114,7 @@
               <div class="mape-gauge-bar" [style.width.%]="mapeQuality.fillWidth" [style.background]="mapeQuality.color"></div>
             </div>
             <span class="mape-quality-label" [style.color]="mapeQuality.color">{{ mapeQuality.label }}</span>
-            <p class="executive-note">Error porcentual promedio del modelo.</p>
+            <p class="executive-note">Óptimo ≤15%, aceptable 16–20%, deficiente &gt;20%.</p>
           </div>
         </article>
       }
@@ -142,361 +131,160 @@
           </div>
         </article>
       }
-    </section>
 
-    <!-- ── FORECAST VS REAL + ALERTS ── -->
-    <section class="section-block">
-      <div class="section-heading">
-        <div>
-          <h3>Pronóstico vs real</h3>
-          <p>Comparación operativa y alertas SLA del canal.</p>
+      <article class="card executive-card executive-card-actual">
+        <div class="executive-top">
+          <div class="executive-label">Volumen real</div>
+          <span class="executive-badge executive-badge-teal">Histórico</span>
         </div>
-      </div>
-
-      @if (monitoringLoading) {
-        <section class="state-box loading"><span class="spinner"></span> Cargando comparación…</section>
-      }
-      @if (monitoringError && !monitoringLoading) { <section class="state-box error">{{ monitoringError }}</section> }
-      @if (alertError && !alertsLoading) { <section class="state-box error">{{ alertError }}</section> }
-
-      <section class="grid comparison-grid">
-        <article class="card summary-mini-card summary-mini-card-purple">
-          <div class="card-section-title">Forecast esperado</div>
-          <h3>@if (selectedMonitoring) { {{ selectedMonitoring.forecast_total | number:'1.2-2' }} } @else { – }</h3>
-          <p class="executive-note">Volumen total pronosticado.</p>
-        </article>
-        <article class="card summary-mini-card summary-mini-card-teal">
-          <div class="card-section-title">Volumen real</div>
-          <h3>@if (selectedMonitoring?.actual_total !== null && selectedMonitoring?.actual_total !== undefined) { {{ selectedMonitoring?.actual_total | number:'1.2-2' }} } @else { Sin data }</h3>
-          <p class="executive-note">Valor real del histórico.</p>
-        </article>
-        <article class="card summary-mini-card summary-mini-card-blue">
-          <div class="card-section-title">Desviación %</div>
-          <h3>@if (selectedMonitoring?.deviation_percentage !== null && selectedMonitoring?.deviation_percentage !== undefined) { {{ selectedMonitoring?.deviation_percentage | number:'1.2-2' }}% } @else { – }</h3>
-          <p class="executive-note">Brecha forecast vs real.</p>
-        </article>
-        <article class="card summary-mini-card summary-mini-card-slate">
-          <div class="card-section-title">Riesgo</div>
-          <h3><span class="monitoring-pill" [ngClass]="getRiskClass(selectedMonitoring?.risk_level)">{{ selectedMonitoringRiskLabel }}</span></h3>
-          <p class="executive-note">Clasificación automática.</p>
-        </article>
-      </section>
-
-      <div class="activity-cards-grid activity-cards-grid-alerts">
-        <article class="card comparison-card">
-          <div class="history-header history-header-tight">
-            <div>
-              <h3>Comparación del día</h3>
-              <p class="history-subtitle">Fecha operativa cargada.</p>
-            </div>
-            <div class="history-chip-stack">
-              <span class="section-chip section-chip-purple">{{ channel }}</span>
-              <span class="section-chip section-chip-slate">{{ selectedForecastDateLabel }}</span>
-            </div>
-          </div>
-          @if (selectedMonitoring) {
-            <div class="comparison-stack">
-              <div class="info-row"><span>Forecast esperado</span><strong>{{ selectedMonitoring.forecast_total | number:'1.2-2' }}</strong></div>
-              <div class="info-row"><span>Volumen real</span><strong>@if (selectedMonitoring.actual_total !== null && selectedMonitoring.actual_total !== undefined) { {{ selectedMonitoring.actual_total | number:'1.2-2' }} } @else { Sin data real }</strong></div>
-              <div class="info-row"><span>Slots forecast</span><strong>{{ selectedMonitoring.forecast_intervals_count }}</strong></div>
-              <div class="info-row"><span>Slots reales</span><strong>{{ selectedMonitoring.actual_intervals_count }}</strong></div>
-              <div class="info-row"><span>Error</span><strong>{{ selectedMonitoringErrorLabel }}</strong></div>
-              <div class="info-row"><span>Mensaje</span><strong class="comparison-message">{{ selectedMonitoring.message }}</strong></div>
-            </div>
-          } @else { <div class="empty-state-inline">Sin comparación para la fecha seleccionada.</div> }
-        </article>
-
-        <article class="card alerts-card">
-          <div class="history-header history-header-tight">
-            <div>
-              <h3>Alertas activas</h3>
-              <p class="history-subtitle">Riesgos abiertos del canal.</p>
-            </div>
-            <div class="history-chip-stack">
-              <span class="section-chip section-chip-red">{{ activeCriticalAlertsCount }} críticas</span>
-              <span class="section-chip section-chip-slate">{{ activeAlertCount }} activas</span>
-            </div>
-          </div>
-          @if (alertsLoading) { <div class="state-box loading inline-state-box"><span class="spinner"></span> Cargando alertas…</div>
-          } @else if (activeAlerts.length) {
-            <div class="alert-list">
-              @for (item of activeAlerts; track item.id) {
-                <div class="alert-item">
-                  <div class="alert-item-top">
-                    <strong>#{{ item.id }} · {{ item.forecast_date }}</strong>
-                    <span class="monitoring-pill" [ngClass]="getRiskClass(item.risk_level)">{{ item.risk_level }}</span>
-                  </div>
-                  <div class="alert-item-body">
-                    <span>Canal: <strong>{{ item.channel }}</strong></span>
-                    <span>Desviación: <strong>@if (item.deviation_percentage !== null && item.deviation_percentage !== undefined) { {{ item.deviation_percentage | number:'1.2-2' }}% } @else { – }</strong></span>
-                  </div>
-                  <p class="alert-message">{{ item.message }}</p>
-                </div>
-              }
-            </div>
-          } @else { <div class="empty-state-inline">No hay alertas activas.</div> }
-        </article>
-      </div>
-
-      <!-- Alert history -->
-      <article class="card history-card-clean">
-        <div class="history-header history-header-tight">
-          <div><h3>Historial de alertas</h3><p class="history-subtitle">Trazabilidad de alertas.</p></div>
-          <span class="section-chip section-chip-purple">{{ channel }}</span>
+        <div class="executive-body">
+          <h3>
+            @if (selectedMonitoring?.actual_total !== null && selectedMonitoring?.actual_total !== undefined) {
+              {{ selectedMonitoring?.actual_total | number:'1.2-2' }}
+            } @else {
+              Sin data
+            }
+          </h3>
+          <p class="executive-note">Comparación frente al forecast.</p>
         </div>
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead><tr><th>ID</th><th>Fecha</th><th>Canal</th><th>Riesgo</th><th>Estado</th><th>Desviación %</th><th>Reconocida por</th></tr></thead>
-            <tbody>
-              @for (item of pagedAlertHistory; track item.id) {
-                <tr>
-                  <td>{{ item.id }}</td><td>{{ item.forecast_date }}</td><td>{{ item.channel }}</td>
-                  <td><span class="monitoring-pill" [ngClass]="getRiskClass(item.risk_level)">{{ item.risk_level }}</span></td>
-                  <td>{{ getAlertStatusLabel(item.status) }}</td>
-                  <td>@if (item.deviation_percentage !== null && item.deviation_percentage !== undefined) { {{ item.deviation_percentage | number:'1.2-2' }}% } @else { – }</td>
-                  <td>{{ item.acknowledged_by || '–' }}</td>
-                </tr>
-              } @empty { <tr><td colspan="7" class="empty-row">Sin historial de alertas.</td></tr> }
-            </tbody>
-          </table>
+      </article>
+
+      <article class="card executive-card executive-card-risk">
+        <div class="executive-top">
+          <div class="executive-label">Riesgo</div>
+          <span class="executive-badge executive-badge-slate">Control</span>
         </div>
-        <div class="pagination-bar" *ngIf="alertHistory.length > pageSize">
-          <button type="button" [disabled]="alertHistoryPage === 1" (click)="goToAlertHistoryPage(alertHistoryPage - 1)">Anterior</button>
-          <span>{{ alertHistoryPage }} / {{ alertHistoryTotalPages }}</span>
-          <button type="button" [disabled]="alertHistoryPage === alertHistoryTotalPages" (click)="goToAlertHistoryPage(alertHistoryPage + 1)">Siguiente</button>
+        <div class="executive-body">
+          <h3>
+            <span class="monitoring-pill" [ngClass]="getRiskClass(selectedMonitoring?.risk_level)">
+              {{ selectedMonitoringRiskLabel }}
+            </span>
+          </h3>
+          <p class="executive-note">Nivel de desviación operativa.</p>
         </div>
       </article>
     </section>
 
-    <!-- ── MODEL HEALTH ── -->
-    <section class="section-block">
-      <div class="section-heading"><div><h3>Salud del modelo</h3><p>Componentes y métricas de rendimiento.</p></div></div>
-      <section class="grid details-grid">
-        <article class="card" style="padding: var(--space-5);">
-          <div class="card-section-title">Disponibilidad del modelo</div>
-          <div class="status-item"><div><strong>Modelo entrenado</strong><p>Archivo principal.</p></div><span class="pill" [class.ok]="summary.lstm_status.model_exists">{{ summary.lstm_status.model_exists ? 'Disponible' : 'No disponible' }}</span></div>
-          <div class="status-item"><div><strong>Escalador</strong><p>Transformador de entradas.</p></div><span class="pill" [class.ok]="summary.lstm_status.scaler_exists">{{ summary.lstm_status.scaler_exists ? 'Disponible' : 'No disponible' }}</span></div>
-          <div class="status-item"><div><strong>Metadata</strong><p>Parámetros del modelo.</p></div><span class="pill" [class.ok]="summary.lstm_status.metadata_exists">{{ summary.lstm_status.metadata_exists ? 'Disponible' : 'No disponible' }}</span></div>
-          <div class="status-item"><div><strong>Métricas</strong><p>Resultados de entrenamiento.</p></div><span class="pill" [class.ok]="summary.lstm_status.metrics_exists">{{ summary.lstm_status.metrics_exists ? 'Disponible' : 'No disponible' }}</span></div>
-        </article>
-        @if (summary.lstm_metrics) {
-          <article class="card" style="padding: var(--space-5);">
-            <div class="card-section-title">Métricas del modelo</div>
-            <ul class="metrics-list">
-              <li><div class="metric-row"><div class="metric-main"><span class="metric-label">MAE</span><span class="metric-help">Error promedio por predicción</span></div><strong>{{ summary.lstm_metrics.mae | number:'1.2-2' }}</strong></div></li>
-              <li><div class="metric-row"><div class="metric-main"><span class="metric-label">RMSE</span><span class="metric-help">Penaliza errores grandes</span></div><strong>{{ summary.lstm_metrics.rmse | number:'1.2-2' }}</strong></div></li>
-              <li><div class="metric-row"><div class="metric-main"><span class="metric-label">MAPE</span><span class="metric-help">Error porcentual promedio</span></div><strong>{{ summary.lstm_metrics.mape | number:'1.2-2' }}%</strong></div></li>
-              <li><div class="metric-row"><div class="metric-main"><span class="metric-label">R²</span><span class="metric-help">Capacidad explicativa</span></div><strong>{{ summary.lstm_metrics.r2 | number:'1.2-2' }}</strong></div></li>
-              <li><div class="metric-row"><div class="metric-main"><span class="metric-label">Train size</span><span class="metric-help">Datos de entrenamiento</span></div><strong>{{ summary.lstm_metrics.train_size }}</strong></div></li>
-              <li><div class="metric-row"><div class="metric-main"><span class="metric-label">Test size</span><span class="metric-help">Datos de validación</span></div><strong>{{ summary.lstm_metrics.test_size }}</strong></div></li>
-            </ul>
-          </article>
-        }
-      </section>
-    </section>
-
-    <!-- ── RECENT ACTIVITY ── -->
-    <section class="section-block">
-      <div class="section-heading"><div><h3>Actividad reciente</h3><p>Últimos resultados y ejecuciones del modelo.</p></div></div>
-      <div class="activity-cards-grid">
-        @if (summary.latest_forecast) {
-          <article class="card featured-forecast-card">
-            <div class="featured-header"><div><div class="card-section-title">Último forecast</div><p class="featured-subtitle">Resultado más reciente.</p></div><span class="featured-chip">Pronóstico</span></div>
-            <div class="featured-forecast-value"><span class="featured-value-label">Valor pronosticado</span><h3>{{ summary.latest_forecast.predicted_value | number:'1.2-2' }}</h3></div>
-            <div class="info-stack">
-              <div class="info-row"><span>ID</span><strong>{{ summary.latest_forecast.id }}</strong></div>
-              <div class="info-row"><span>Canal</span><strong>{{ summary.latest_forecast.channel }}</strong></div>
-              <div class="info-row"><span>Fecha</span><strong>{{ summary.latest_forecast.forecast_date | limaDateTime }}</strong></div>
-            </div>
-          </article>
-        }
-        @if (summary.latest_train_run) {
-          <article class="card featured-trainrun-card">
-            <div class="featured-header"><div><div class="card-section-title">Última corrida</div><p class="featured-subtitle">Entrenamiento más reciente.</p></div><span class="featured-chip featured-chip-teal">Training</span></div>
-            <div class="featured-status-row">
-              <span class="status-pill" [ngClass]="getStatusClass(summary.latest_train_run.status)">{{ summary.latest_train_run.status }}</span>
-              <span class="trainrun-type-badge">{{ summary.latest_train_run.run_type }}</span>
-            </div>
-            <div class="info-stack">
-              @if (summary.latest_train_run.mape != null) { <div class="info-row"><span>MAPE</span><strong>{{ summary.latest_train_run.mape | number:'1.2-2' }}%</strong></div> }
-              @if (summary.latest_train_run.mae != null) { <div class="info-row"><span>MAE</span><strong>{{ summary.latest_train_run.mae | number:'1.2-2' }}</strong></div> }
-              @if (summary.latest_train_run.r2 != null) { <div class="info-row"><span>R²</span><strong>{{ summary.latest_train_run.r2 | number:'1.2-2' }}</strong></div> }
-              <div class="info-row"><span>Canal</span><strong>{{ summary.latest_train_run.channel }}</strong></div>
-            </div>
-          </article>
-        }
-      </div>
-    </section>
-
-    <!-- ── FORECAST TREND CHART ── -->
-    @if (forecastHistory.length >= 2) {
+    @if (summary.lstm_metrics || summary.latest_train_run) {
       <section class="section-block">
-        <div class="section-heading"><div><h3>Tendencia de pronósticos</h3><p>Evolución de valores pronosticados.</p></div></div>
-        <article class="card chart-card">
-          <div class="chart-card-header">
-            <div class="card-section-title">Valores recientes</div>
-            @if (forecastChartData.hasData) {
-              <div class="chart-stats">
-                <span>Mín: <strong>{{ forecastChartData.minLabel }}</strong></span>
-                <span>Máx: <strong>{{ forecastChartData.maxLabel }}</strong></span>
-                <span>N: <strong>{{ forecastHistory.length }}</strong></span>
-              </div>
-            }
+        <div class="section-heading">
+          <div>
+            <h3>Salud del modelo</h3>
+            <p>Indicadores mínimos necesarios para sustentar la calidad del forecast.</p>
           </div>
-          @if (forecastChartData.hasData) {
-            <div class="chart-container">
-              <svg viewBox="0 0 600 180" class="chart-svg" aria-label="Tendencia de pronósticos">
-                <defs>
-                  <linearGradient id="fcastGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#3b5bdb" stop-opacity="0.12"/>
-                    <stop offset="100%" stop-color="#3b5bdb" stop-opacity="0.01"/>
-                  </linearGradient>
-                </defs>
-                @for (gl of forecastChartData.gridLines; track gl.y) {
-                  <line x1="52" x2="584" [attr.y1]="gl.y" [attr.y2]="gl.y" stroke="#e5e5ea" stroke-width="1"/>
-                  <text x="48" [attr.y]="gl.y + 4" text-anchor="end" font-size="10" fill="#9ca3af" font-family="system-ui, sans-serif">{{ gl.label }}</text>
-                }
-                <path [attr.d]="forecastChartData.areaPath" fill="url(#fcastGrad)"/>
-                <path [attr.d]="forecastChartData.linePath" fill="none" stroke="#3b5bdb" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
-                @for (pt of forecastChartData.points; track pt.x) {
-                  <circle [attr.cx]="pt.x" [attr.cy]="pt.y" r="2.5" fill="#3b5bdb" stroke="#ffffff" stroke-width="1.5"/>
-                }
-                @if (forecastChartData.points.length > 0) {
-                  <circle [attr.cx]="forecastChartData.points[forecastChartData.points.length - 1].x" [attr.cy]="forecastChartData.points[forecastChartData.points.length - 1].y" r="4" fill="#3b5bdb" stroke="#ffffff" stroke-width="2"/>
-                }
-                @for (pt of forecastChartData.xLabels; track pt.x) {
-                  <text [attr.x]="pt.x" y="176" text-anchor="middle" font-size="10" fill="#9ca3af" font-family="system-ui, sans-serif">{{ pt.label }}</text>
-                }
-                <line x1="52" x2="584" y1="148" y2="148" stroke="#e5e5ea" stroke-width="1"/>
-              </svg>
-            </div>
-          } @else { <div class="empty-state-card">Datos insuficientes.</div> }
-        </article>
+        </div>
+
+        <div class="activity-cards-grid">
+          @if (summary.lstm_metrics) {
+            <article class="card featured-trainrun-card">
+              <div class="history-header history-header-tight">
+                <div><h3>Métricas LSTM</h3><p class="history-subtitle">Última métrica disponible.</p></div>
+                <span class="section-chip section-chip-purple">{{ channel }}</span>
+              </div>
+              <ul class="metrics-list">
+                <li><div class="metric-row"><div class="metric-main"><span class="metric-label">MAE</span><span class="metric-help">Error absoluto medio</span></div><strong>{{ summary.lstm_metrics.mae | number:'1.2-2' }}</strong></div></li>
+                <li><div class="metric-row"><div class="metric-main"><span class="metric-label">RMSE</span><span class="metric-help">Penaliza errores grandes</span></div><strong>{{ summary.lstm_metrics.rmse | number:'1.2-2' }}</strong></div></li>
+                <li><div class="metric-row"><div class="metric-main"><span class="metric-label">MAPE</span><span class="metric-help">Error porcentual promedio</span></div><strong>{{ summary.lstm_metrics.mape | number:'1.2-2' }}%</strong></div></li>
+                <li><div class="metric-row"><div class="metric-main"><span class="metric-label">R²</span><span class="metric-help">Capacidad explicativa</span></div><strong>{{ summary.lstm_metrics.r2 | number:'1.2-2' }}</strong></div></li>
+              </ul>
+            </article>
+          }
+
+          @if (summary.latest_train_run) {
+            <article class="card featured-trainrun-card">
+              <div class="history-header history-header-tight">
+                <div><h3>Última corrida</h3><p class="history-subtitle">Resumen de entrenamiento/reentrenamiento.</p></div>
+                <span class="status-pill" [ngClass]="getStatusClass(summary.latest_train_run.status)">{{ summary.latest_train_run.status }}</span>
+              </div>
+              <div class="info-stack">
+                <div class="info-row"><span>Tipo</span><strong>{{ summary.latest_train_run.run_type }}</strong></div>
+                @if (summary.latest_train_run.mape != null) { <div class="info-row"><span>MAPE</span><strong>{{ summary.latest_train_run.mape | number:'1.2-2' }}%</strong></div> }
+                @if (summary.latest_train_run.rmse != null) { <div class="info-row"><span>RMSE</span><strong>{{ summary.latest_train_run.rmse | number:'1.2-2' }}</strong></div> }
+                <div class="info-row"><span>Registrado</span><strong>{{ summary.latest_train_run.created_at | limaDateTime }}</strong></div>
+              </div>
+            </article>
+          }
+        </div>
       </section>
     }
 
-    <!-- ── OPERATIONAL INTERVALS ── -->
     <section class="section-block">
-      <div class="section-heading"><div><h3>Forecast operativo por intervalos</h3><p>Detalle por slots del forecast seleccionado.</p></div></div>
-
-      <section class="grid operational-summary-grid">
-        <article class="card summary-mini-card summary-mini-card-purple"><div class="card-section-title">Fecha</div><h3>{{ selectedForecastDateLabel }}</h3><p class="executive-note">Fecha del forecast operativo.</p></article>
-        <article class="card summary-mini-card summary-mini-card-blue"><div class="card-section-title">Total diario</div><h3>{{ intervalDailyTotal | number:'1.2-2' }}</h3><p class="executive-note">Suma de {{ forecastIntervals.length }} slots.</p></article>
-        <article class="card summary-mini-card summary-mini-card-teal"><div class="card-section-title">Pico operativo</div><h3>@if (peakInterval) { {{ peakInterval.interval_time.slice(0, 5) }} } @else { – }</h3><p class="executive-note">@if (peakInterval) { {{ peakInterval.predicted_value | number:'1.2-2' }} interacciones. } @else { Sin slots. }</p></article>
-        <article class="card summary-mini-card summary-mini-card-slate"><div class="card-section-title">Modelo</div><h3 class="model-version-value">{{ latestOperationalModelVersion }}</h3><p class="executive-note">Versión del forecast.</p></article>
-      </section>
-
-      @if (intervalLoading) { <section class="state-box loading"><span class="spinner"></span> Cargando intervalos…</section> }
-      @if (intervalError && !intervalLoading) { <section class="state-box error">{{ intervalError }}</section> }
-
-      <div class="activity-cards-grid activity-cards-grid-forecast">
-        <article class="card chart-card">
-          <div class="chart-card-header chart-card-header-stack">
-            <div><div class="card-section-title">Curva por slots</div><p class="featured-subtitle">00:00 – 16:30 · {{ channel }}</p></div>
-            <div class="chart-stats">
-              <span>Slots: <strong>{{ forecastIntervals.length }}</strong></span>
-              <span>Avg: <strong>{{ intervalAverage | number:'1.2-2' }}</strong></span>
-              <span>Máx: <strong>{{ intervalChartData.maxLabel || '–' }}</strong></span>
-            </div>
-          </div>
-          @if (intervalChartData.hasData) {
-            <div class="chart-container chart-container-intervals">
-              <svg viewBox="0 0 720 240" class="chart-svg" aria-label="Forecast por intervalos">
-                <defs>
-                  <linearGradient id="intervalBarGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#4c6ef5" stop-opacity="0.85"/>
-                    <stop offset="100%" stop-color="#3b5bdb" stop-opacity="0.55"/>
-                  </linearGradient>
-                </defs>
-                @for (gl of intervalChartData.gridLines; track gl.y) {
-                  <line x1="52" x2="702" [attr.y1]="gl.y" [attr.y2]="gl.y" stroke="#e5e5ea" stroke-width="1"/>
-                  <text x="46" [attr.y]="gl.y + 4" text-anchor="end" font-size="10" fill="#9ca3af" font-family="system-ui, sans-serif">{{ gl.label }}</text>
-                }
-                @for (bar of intervalChartData.bars; track bar.x) {
-                  <rect [attr.x]="bar.x" [attr.y]="bar.y" [attr.width]="bar.width" [attr.height]="bar.height" fill="url(#intervalBarGrad)" rx="3" opacity="0.85"/>
-                  @if (bar.showLabel) {
-                    <text [attr.x]="bar.x + bar.width / 2" y="232" text-anchor="middle" font-size="10" fill="#9ca3af" font-family="system-ui, sans-serif">{{ bar.label }}</text>
-                  }
-                }
-                <line x1="52" x2="702" [attr.y1]="intervalChartData.bottom" [attr.y2]="intervalChartData.bottom" stroke="#e5e5ea" stroke-width="1"/>
-              </svg>
-            </div>
-          } @else { <div class="empty-state-card">Sin datos de intervalos.</div> }
-        </article>
-
-        <article class="card featured-forecast-card interval-summary-card">
-          <div class="featured-header"><div><div class="card-section-title">Resumen operativo</div><p class="featured-subtitle">Lectura rápida del forecast.</p></div><span class="featured-chip">{{ channel }}</span></div>
-          <div class="info-stack">
-            <div class="info-row"><span>Fecha</span><strong>{{ selectedForecastDateLabel }}</strong></div>
-            <div class="info-row"><span>Total diario</span><strong>{{ intervalDailyTotal | number:'1.2-2' }}</strong></div>
-            <div class="info-row"><span>Slots</span><strong>{{ forecastIntervals.length }}</strong></div>
-            <div class="info-row"><span>Canal</span><strong>{{ channel }}</strong></div>
-            <div class="info-row"><span>Pico</span><strong>@if (peakInterval) { {{ peakInterval.interval_time.slice(0, 5) }} · {{ peakInterval.predicted_value | number:'1.2-2' }} } @else { – }</strong></div>
-            <div class="info-row"><span>Turno pico</span><strong>@if (peakInterval) { {{ getShiftLabel(peakInterval.shift_label) }} } @else { – }</strong></div>
-          </div>
-        </article>
+      <div class="section-heading">
+        <div>
+          <h3>Alertas activas</h3>
+          <p>Resumen mínimo para cumplir el control operativo; el historial completo está en Monitoreo.</p>
+        </div>
+        <div class="history-chip-stack">
+          <span class="section-chip section-chip-red">{{ activeCriticalAlertsCount }} críticas</span>
+          <span class="section-chip section-chip-slate">{{ activeAlertCount }} activas</span>
+        </div>
       </div>
 
-      <!-- Forecast history table -->
-      <article class="card history-card-clean">
-        <div class="history-header history-header-tight">
-          <div><h3>Historial de forecasts</h3><p class="history-subtitle">Clic en una fila para cargar el detalle por slots.</p></div>
-          <span class="section-chip section-chip-purple">{{ channel }}</span>
-        </div>
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead><tr><th>ID</th><th>Canal</th><th>Fecha forecast</th><th>Total diario</th><th>Modelo</th><th>Creado</th></tr></thead>
-            <tbody>
-              @for (item of pagedForecastHistory; track item.id) {
-                <tr class="clickable-row" [class.selected-row]="isSelectedForecastRun(item)" (click)="selectForecastRun(item)">
-                  <td>{{ item.id }}</td><td>{{ item.channel }}</td><td>{{ item.forecast_date | limaDateTime }}</td>
-                  <td><span class="value-pill value-pill-purple">{{ item.predicted_value | number:'1.2-2' }}</span></td>
-                  <td>{{ item.model_version || '–' }}</td><td>{{ item.created_at | limaDateTime }}</td>
-                </tr>
-              } @empty { <tr><td colspan="6" class="empty-row">Sin forecasts recientes.</td></tr> }
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination-bar" *ngIf="forecastHistory.length > pageSize">
-          <button type="button" [disabled]="forecastHistoryPage === 1" (click)="goToForecastHistoryPage(forecastHistoryPage - 1)">Anterior</button>
-          <span>{{ forecastHistoryPage }} / {{ forecastHistoryTotalPages }}</span>
-          <button type="button" [disabled]="forecastHistoryPage === forecastHistoryTotalPages" (click)="goToForecastHistoryPage(forecastHistoryPage + 1)">Siguiente</button>
-        </div>
-      </article>
+      @if (alertError && !alertsLoading) {
+        <section class="state-box error">{{ alertError }}</section>
+      }
 
-      <!-- Interval detail table -->
-      <article class="card history-card-clean">
-        <div class="history-header history-header-tight">
-          <div><h3>Tabla por intervalos</h3><p class="history-subtitle">Detalle del forecast operativo.</p></div>
-          <div class="history-chip-stack">
-            <span class="section-chip section-chip-purple">{{ channel }}</span>
-            <span class="section-chip section-chip-slate">{{ selectedForecastDateLabel }}</span>
+      <article class="card alerts-card alerts-card-compact">
+        @if (alertsLoading) {
+          <div class="state-box loading inline-state-box"><span class="spinner"></span> Cargando alertas…</div>
+        } @else if (activeAlerts.length) {
+          <div class="alert-list">
+            @for (item of activeAlerts.slice(0, 3); track item.id) {
+              <div class="alert-item">
+                <div class="alert-item-top">
+                  <strong>#{{ item.id }} · {{ item.forecast_date }}</strong>
+                  <span class="monitoring-pill" [ngClass]="getRiskClass(item.risk_level)">{{ item.risk_level }}</span>
+                </div>
+                <div class="alert-item-body">
+                  <span>Canal: <strong>{{ item.channel }}</strong></span>
+                  <span>
+                    Desviación:
+                    <strong>
+                      @if (item.deviation_percentage !== null && item.deviation_percentage !== undefined) {
+                        {{ item.deviation_percentage | number:'1.2-2' }}%
+                      } @else {
+                        –
+                      }
+                    </strong>
+                  </span>
+                </div>
+                <p class="alert-message">{{ item.message }}</p>
+              </div>
+            }
           </div>
-        </div>
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead><tr><th>Slot</th><th>Hora</th><th>Turno</th><th>Forecast</th><th>AHT</th><th>Asesores</th><th>Datetime</th></tr></thead>
-            <tbody>
-              @for (item of pagedForecastIntervals; track item.id) {
-                <tr>
-                  <td>{{ item.slot_index + 1 }}</td>
-                  <td>{{ item.interval_time.slice(0, 5) }}</td>
-                  <td><span class="tag-pill" [class.tag-pill-morning]="item.shift_label === 'morning'" [class.tag-pill-afternoon]="item.shift_label === 'afternoon'">{{ getShiftLabel(item.shift_label) }}</span></td>
-                  <td><span class="value-pill value-pill-purple">{{ item.predicted_value | number:'1.2-2' }}</span></td>
-                  <td><span class="value-pill value-pill-warning">{{ item.aht !== null && item.aht !== undefined ? (item.aht | number:'1.2-2') : '–' }}</span></td>
-                  <td><span class="value-pill value-pill-success">{{ item.required_agents ?? 0 }}</span></td>
-                  <td>{{ item.forecast_datetime | limaDateTime }}</td>
-                </tr>
-              } @empty { <tr><td colspan="7" class="empty-row">Sin detalle por intervalos.</td></tr> }
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination-bar" *ngIf="forecastIntervals.length > pageSize">
-          <button type="button" [disabled]="forecastIntervalsPage === 1" (click)="goToForecastIntervalsPage(forecastIntervalsPage - 1)">Anterior</button>
-          <span>{{ forecastIntervalsPage }} / {{ forecastIntervalsTotalPages }}</span>
-          <button type="button" [disabled]="forecastIntervalsPage === forecastIntervalsTotalPages" (click)="goToForecastIntervalsPage(forecastIntervalsPage + 1)">Siguiente</button>
-        </div>
+        } @else {
+          <div class="empty-state-inline">No hay alertas activas.</div>
+        }
       </article>
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading">
+        <div>
+          <h3>Accesos rápidos</h3>
+          <p>Se conserva el cumplimiento funcional, pero cada detalle vive en su pantalla natural.</p>
+        </div>
+      </div>
+
+      <div class="quick-access-grid">
+        <a class="card quick-access-card" routerLink="/monitoring">
+          <span class="section-chip section-chip-blue">Monitoreo</span>
+          <strong>Trazabilidad técnica</strong>
+          <p>Corridas del modelo, historial de forecasts, logs del scheduler y acciones técnicas.</p>
+        </a>
+
+        <a class="card quick-access-card" routerLink="/forecast-monthly-intervals">
+          <span class="section-chip section-chip-purple">Forecast mensual</span>
+          <strong>Detalle por intervalos</strong>
+          <p>Tabla completa con slot, fecha, hora, turno, forecast, AHT y asesores requeridos.</p>
+        </a>
+
+        <a class="card quick-access-card" routerLink="/quality">
+          <span class="section-chip section-chip-slate">Calidad</span>
+          <strong>Validación de datos</strong>
+          <p>Completitud, consistencia, exactitud y observaciones previas al procesamiento predictivo.</p>
+        </a>
+      </div>
     </section>
   }
 </div>

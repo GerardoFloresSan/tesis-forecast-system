@@ -26,8 +26,8 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
   channels: string[] = ['Choice', 'España'];
   selectedChannel = 'Choice';
 
-  startDate = '2026-05-01';
-  endDate = '2026-05-31';
+  startDate = '';
+  endDate = '';
 
   forecastIntervals: ForecastIntervalHistoryItem[] = [];
   pagedForecastIntervals: ForecastIntervalHistoryItem[] = [];
@@ -46,9 +46,11 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
 
   totalForecast = 0;
   averageAht = 0;
-  totalRequiredAgents = 0;
+  peakRequiredAgents = 0;
+  averageRequiredAgents = 0;
 
   ngOnInit(): void {
+    this.setDefaultNextMonthRange();
     this.loadChannels();
     this.refreshMonthlyStatus();
     this.loadMonthlyForecast();
@@ -187,6 +189,13 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
     return item.slot_index + 1;
   }
 
+  getShiftLabel(label: string | null | undefined): string {
+    const value = (label || '').toLowerCase();
+    if (value === 'morning') return 'Mañana';
+    if (value === 'afternoon') return 'Tarde';
+    return label || '-';
+  }
+
   get canGoPrevious(): boolean {
     return this.currentPage > 1;
   }
@@ -228,6 +237,23 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
     return !this.loading && !this.generating && this.monthlyStatus?.status !== 'complete';
   }
 
+
+  private setDefaultNextMonthRange(): void {
+    const today = new Date();
+    const firstDayNextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const lastDayNextMonth = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+
+    this.startDate = this.toIsoDate(firstDayNextMonth);
+    this.endDate = this.toIsoDate(lastDayNextMonth);
+  }
+
+  private toIsoDate(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   private calculateSummary(): void {
     this.totalForecast = this.forecastIntervals.reduce(
       (sum, item) => sum + Number(item.predicted_value || 0),
@@ -242,10 +268,17 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
       ? validAhtValues.reduce((sum, value) => sum + value, 0) / validAhtValues.length
       : 0;
 
-    this.totalRequiredAgents = this.forecastIntervals.reduce(
-      (sum, item) => sum + Number(item.required_agents || 0),
-      0
-    );
+    const requiredAgentsValues = this.forecastIntervals
+      .map((item) => Number(item.required_agents || 0))
+      .filter((value) => value > 0);
+
+    this.peakRequiredAgents = requiredAgentsValues.length > 0
+      ? Math.max(...requiredAgentsValues)
+      : 0;
+
+    this.averageRequiredAgents = requiredAgentsValues.length > 0
+      ? requiredAgentsValues.reduce((sum, value) => sum + value, 0) / requiredAgentsValues.length
+      : 0;
   }
 
   private resetTable(): void {
@@ -256,6 +289,7 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
     this.totalRecords = 0;
     this.totalForecast = 0;
     this.averageAht = 0;
-    this.totalRequiredAgents = 0;
+    this.peakRequiredAgents = 0;
+    this.averageRequiredAgents = 0;
   }
 }

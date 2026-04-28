@@ -36,6 +36,44 @@
     </div>
   </section>
 
+  <section class="model-actions-panel">
+    <div class="model-actions-header">
+      <div>
+        <h3>Acciones técnicas del modelo</h3>
+        <p>Operaciones de entrenamiento, reentrenamiento y generación manual de forecast.</p>
+      </div>
+      <span class="section-chip section-chip-blue">{{ channel }}</span>
+    </div>
+
+    <div class="model-actions-buttons">
+      <button type="button" class="model-action-button primary" (click)="trainLstm()" [disabled]="actionLoading || modelActionsDisabled">
+        Entrenar LSTM
+      </button>
+      <button type="button" class="model-action-button success" (click)="retrainLstm()" [disabled]="actionLoading || modelActionsDisabled">
+        Reentrenar LSTM
+      </button>
+      <button type="button" class="model-action-button dark" (click)="checkAndRetrain()" [disabled]="actionLoading || modelActionsDisabled">
+        Check & Retrain
+      </button>
+      <button type="button" class="model-action-button warning" (click)="generateForecast()" [disabled]="actionLoading || forecastActionsDisabled">
+        Generar forecast diario
+      </button>
+    </div>
+
+    @if (modelActionsDisabled) {
+      <div class="action-note">Las acciones LSTM están habilitadas solo para canales configurados en el motor de forecast.</div>
+    }
+    @if (actionLoading) {
+      <div class="state-box loading inline-state-box"><span class="spinner"></span> Ejecutando acción técnica...</div>
+    }
+    @if (actionMessage) {
+      <div class="state-box success inline-state-box">{{ actionMessage }}</div>
+    }
+    @if (actionError) {
+      <div class="state-box error inline-state-box">{{ actionError }}</div>
+    }
+  </section>
+
   @if (loading) {
     <section class="state-box loading">
       <span class="spinner"></span> Cargando monitoreo...
@@ -238,11 +276,10 @@
             <div class="mape-chart-title">
               <span>Evolución de MAPE por corrida</span>
               <div class="mape-legend">
-                <span class="legend-dot" style="background:#15803d"></span><span>&lt; 10 %</span>
-                <span class="legend-dot" style="background:#2563eb"></span><span>10–15 %</span>
-                <span class="legend-dot" style="background:#b45309"></span><span>15–20 %</span>
-                <span class="legend-dot" style="background:#b91c1c"></span><span>&gt; 20 %</span>
-                <span class="legend-dash"></span><span>Umbral 15 %</span>
+                <span class="legend-dot" style="background:#15803d"></span><span>Óptimo ≤15 %</span>
+                <span class="legend-dot" style="background:#b45309"></span><span>Aceptable 16–20 %</span>
+                <span class="legend-dot" style="background:#b91c1c"></span><span>Deficiente &gt;20 %</span>
+                <span class="legend-dash"></span><span>Umbral 20 %</span>
               </div>
             </div>
 
@@ -279,7 +316,7 @@
                       stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.65"/>
                 <text x="578" [attr.y]="mapeChartData.thresholdY + 4"
                       font-size="9" fill="#b91c1c"
-                      font-family="'Segoe UI', Tahoma, sans-serif">15%</text>
+                      font-family="'Segoe UI', Tahoma, sans-serif">20%</text>
 
                 <line x1="48" x2="576"
                       [attr.y1]="mapeChartData.bottom" [attr.y2]="mapeChartData.bottom"

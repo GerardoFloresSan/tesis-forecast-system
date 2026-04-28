@@ -91,9 +91,9 @@
     </article>
 
     <article class="kpi-card">
-      <span>HC acumulado</span>
-      <strong>{{ totalRequiredAgents }}</strong>
-      <small>Asesores requeridos</small>
+      <span>HC pico</span>
+      <strong>{{ peakRequiredAgents }}</strong>
+      <small>Máximo requerido por slot</small>
     </article>
   </section>
 
@@ -131,7 +131,7 @@
                 <td>{{ getDisplaySlot(item) }}</td>
                 <td>{{ item.forecast_date | date:'dd/MM/yyyy' }}</td>
                 <td>{{ formatTime(item.interval_time) }}</td>
-                <td><span class="shift-badge">{{ item.shift_label }}</span></td>
+                <td><span class="shift-badge">{{ getShiftLabel(item.shift_label) }}</span></td>
                 <td>{{ item.predicted_value | number:'1.0-0' }}</td>
                 <td>{{ item.aht | number:'1.0-0' }}</td>
                 <td><span class="hc-badge">{{ item.required_agents || 0 }}</span></td>
