@@ -33,7 +33,7 @@
       Consultar
     </button>
 
-    <button type="button" class="secondary-button" (click)="generateMonthlyForecast()" [disabled]="loading || generating">
+    <button type="button" class="secondary-button" (click)="generateMonthlyForecast()" [disabled]="!canGenerateMonthlyForecast">
       @if (generating) {
         Generando...
       } @else {
@@ -41,6 +41,27 @@
       }
     </button>
   </section>
+
+  <section class="status-card" [ngClass]="statusClass">
+    <div>
+      <span class="status-eyebrow">Estado del rango</span>
+      <strong>{{ statusLabel }}</strong>
+      @if (monthlyStatus) {
+        <p>{{ monthlyStatus.message }}</p>
+      } @else {
+        <p>No se pudo verificar el estado del forecast para el rango seleccionado.</p>
+      }
+    </div>
+
+    @if (monthlyStatus) {
+      <div class="status-metrics">
+        <span>{{ monthlyStatus.coverage_percentage | number:'1.0-2' }}% cobertura</span>
+        <span>{{ monthlyStatus.generated_days }}/{{ monthlyStatus.requested_days }} días</span>
+        <span>{{ monthlyStatus.total_intervals }} slots</span>
+      </div>
+    }
+  </section>
+
 
   @if (successMessage) {
     <div class="success-message">{{ successMessage }}</div>

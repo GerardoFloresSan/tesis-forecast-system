@@ -4,7 +4,8 @@ import { FormsModule } from '@angular/forms';
 
 import {
   ForecastIntervalHistoryItem,
-  ForecastMonthlyResponse
+  ForecastMonthlyResponse,
+  ForecastMonthlyStatusResponse
 } from '../../models/system-summary.model';
 import { ChannelService } from '../../services/channel.service';
 import { ForecastActionsService } from '../../services/forecast-actions.service';
@@ -40,6 +41,8 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
   generating = false;
   errorMessage = '';
   successMessage = '';
+  monthlyStatus: ForecastMonthlyStatusResponse | null = null;
+  checkingStatus = false;
 
   totalForecast = 0;
   averageAht = 0;
@@ -47,6 +50,7 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadChannels();
+    this.refreshMonthlyStatus();
     this.loadMonthlyForecast();
   }
 
@@ -66,6 +70,24 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
     });
   }
 
+
+  refreshMonthlyStatus(): void {
+    this.checkingStatus = true;
+
+    this.forecastActionsService
+      .getMonthlyForecastStatus(this.selectedChannel, this.startDate, this.endDate)
+      .subscribe({
+        next: (response) => {
+          this.monthlyStatus = response;
+          this.checkingStatus = false;
+        },
+        error: () => {
+          this.monthlyStatus = null;
+          this.checkingStatus = false;
+        }
+      });
+  }
+
   loadMonthlyForecast(): void {
     this.loading = true;
     this.errorMessage = '';
@@ -82,11 +104,13 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
           this.calculateSummary();
           this.updatePagedData();
           this.loading = false;
+          this.refreshMonthlyStatus();
         },
         error: () => {
           this.resetTable();
           this.errorMessage = 'No se pudo consultar el forecast mensual.';
           this.loading = false;
+          this.refreshMonthlyStatus();
         }
       });
   }
@@ -102,6 +126,7 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
         next: (response: ForecastMonthlyResponse) => {
           this.successMessage = response.message;
           this.generating = false;
+          this.refreshMonthlyStatus();
           this.loadMonthlyForecast();
         },
         error: (error) => {
@@ -112,6 +137,7 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
   }
 
   onSearch(): void {
+    this.refreshMonthlyStatus();
     this.loadMonthlyForecast();
   }
 
@@ -167,6 +193,39 @@ export class ForecastMonthlyIntervalsComponent implements OnInit {
 
   get canGoNext(): boolean {
     return this.currentPage < this.totalPages;
+  }
+
+
+  get statusLabel(): string {
+    if (this.checkingStatus) {
+      return 'Verificando forecast...';
+    }
+
+    if (!this.monthlyStatus) {
+      return 'Estado no disponible';
+    }
+
+    if (this.monthlyStatus.status === 'complete') {
+      return 'Forecast mensual completo';
+    }
+
+    if (this.monthlyStatus.status === 'partial') {
+      return 'Forecast mensual incompleto';
+    }
+
+    return 'Forecast mensual no generado';
+  }
+
+  get statusClass(): string {
+    if (!this.monthlyStatus) {
+      return 'status-neutral';
+    }
+
+    return `status-${this.monthlyStatus.status}`;
+  }
+
+  get canGenerateMonthlyForecast(): boolean {
+    return !this.loading && !this.generating && this.monthlyStatus?.status !== 'complete';
   }
 
   private calculateSummary(): void {

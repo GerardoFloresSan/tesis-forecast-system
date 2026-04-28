@@ -451,14 +451,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
   get mapeQuality(): MapeQuality {
     const mape = this.summary?.lstm_metrics?.mape;
     if (mape == null) {
-      return { label: 'Sin datos', color: '#94a3b8', bgColor: '#f1f5f9', fillWidth: 0 };
+      return { label: 'Sin datos', color: '#9ca3af', bgColor: '#f3f4f6', fillWidth: 0 };
     }
 
     const fillWidth = Math.min(mape, 30) / 30 * 100;
-    if (mape < 10) return { label: 'Excelente', color: '#15803d', bgColor: '#dcfce7', fillWidth };
-    if (mape < 15) return { label: 'Bueno', color: '#2563eb', bgColor: '#dbeafe', fillWidth };
-    if (mape < 20) return { label: 'Aceptable', color: '#b45309', bgColor: '#fef3c7', fillWidth };
-    return { label: 'Mejorable', color: '#b91c1c', bgColor: '#fee2e2', fillWidth };
+    if (mape < 10) return { label: 'Excelente', color: '#16a34a', bgColor: 'rgba(22, 163, 74, 0.08)', fillWidth };
+    if (mape < 15) return { label: 'Bueno', color: '#3b5bdb', bgColor: 'rgba(59, 91, 219, 0.08)', fillWidth };
+    if (mape < 20) return { label: 'Aceptable', color: '#ca8a04', bgColor: 'rgba(202, 138, 4, 0.08)', fillWidth };
+    return { label: 'Mejorable', color: '#dc2626', bgColor: 'rgba(220, 38, 38, 0.06)', fillWidth };
   }
 
   get forecastChartData(): ForecastChartData {
