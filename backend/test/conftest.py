@@ -22,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.database import Base, SessionLocal, engine
+from app.core.security import get_password_hash
 
 from app.models.api_access_log import APIAccessLog
 from app.models.data_quality_report import DataQualityReport
@@ -42,6 +43,11 @@ from app.routers.model import router as model_router
 from app.routers.quality import router as quality_router
 from app.routers.upload import router as upload_router
 
+TEST_USERNAME = "admin"
+TEST_PASSWORD = "Admin123*"
+TEST_FULL_NAME = "Administrador de Pruebas"
+TEST_ROLE = "analista_operativo"
+
 
 def create_test_app() -> FastAPI:
     app = FastAPI(title="Forecast Test API")
@@ -54,10 +60,34 @@ def create_test_app() -> FastAPI:
     return app
 
 
+def seed_test_user() -> None:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.username == TEST_USERNAME).first()
+        if user is None:
+            user = User(
+                username=TEST_USERNAME,
+                full_name=TEST_FULL_NAME,
+                role=TEST_ROLE,
+                hashed_password=get_password_hash(TEST_PASSWORD),
+                is_active=True,
+            )
+            db.add(user)
+        else:
+            user.full_name = TEST_FULL_NAME
+            user.role = TEST_ROLE
+            user.hashed_password = get_password_hash(TEST_PASSWORD)
+            user.is_active = True
+        db.commit()
+    finally:
+        db.close()
+
+
 @pytest.fixture(autouse=True)
 def reset_database():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    seed_test_user()
     yield
 
 
@@ -75,6 +105,20 @@ def client():
     app = create_test_app()
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def auth_headers(client):
+    response = client.post(
+        "/auth/login",
+        json={
+            "username": TEST_USERNAME,
+            "password": TEST_PASSWORD,
+        },
+    )
+    assert response.status_code == 200, response.text
+    token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -8,6 +8,7 @@ from app.models.historical_interaction import HistoricalInteraction
 def test_get_forecast_monitoring_summary_returns_normal_status_when_deviation_is_low(
     db_session,
     client,
+    auth_headers,
 ):
     header = ForecastRun(
         channel="Choice",
@@ -72,6 +73,7 @@ def test_get_forecast_monitoring_summary_returns_normal_status_when_deviation_is
     response = client.get(
         "/forecast/monitoring/summary",
         params={"channel": "Choice"},
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -91,6 +93,7 @@ def test_get_forecast_monitoring_summary_returns_normal_status_when_deviation_is
 def test_get_forecast_monitoring_by_date_returns_critical_breach_when_deviation_exceeds_10(
     db_session,
     client,
+    auth_headers,
 ):
     header = ForecastRun(
         channel="Choice",
@@ -158,6 +161,7 @@ def test_get_forecast_monitoring_by_date_returns_critical_breach_when_deviation_
             "channel": "Choice",
             "forecast_date": "2026-03-02",
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -175,6 +179,7 @@ def test_get_forecast_monitoring_by_date_returns_critical_breach_when_deviation_
 def test_get_forecast_monitoring_summary_returns_no_actual_data_when_real_values_do_not_exist(
     db_session,
     client,
+    auth_headers,
 ):
     header = ForecastRun(
         channel="España",
@@ -206,6 +211,7 @@ def test_get_forecast_monitoring_summary_returns_no_actual_data_when_real_values
     response = client.get(
         "/forecast/monitoring/summary",
         params={"channel": "espana"},
+        headers=auth_headers,
     )
 
     assert response.status_code == 200

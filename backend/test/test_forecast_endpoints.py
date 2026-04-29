@@ -48,13 +48,13 @@ def _build_forecast_batch(channel: str = "Choice") -> dict:
     }
 
 
-def test_post_forecast_daily_returns_operational_batch(client, monkeypatch):
+def test_post_forecast_daily_returns_operational_batch(client, auth_headers, monkeypatch):
     monkeypatch.setattr(
         "app.routers.forecast.create_daily_forecast",
         lambda db, channel: _build_forecast_batch(channel),
     )
 
-    response = client.post("/forecast/daily", json={"channel": "Choice"})
+    response = client.post("/forecast/daily", json={"channel": "Choice"}, headers=auth_headers)
     assert response.status_code == 200
 
     body = response.json()
@@ -67,18 +67,18 @@ def test_post_forecast_daily_returns_operational_batch(client, monkeypatch):
     assert body["intervals"][-1]["interval_time"] == "16:30:00"
 
 
-def test_post_forecast_daily_returns_400_for_invalid_channel(client, monkeypatch):
+def test_post_forecast_daily_returns_400_for_invalid_channel(client, auth_headers, monkeypatch):
     def _raise_error(db, channel):
         raise ValueError("Canal no soportado para forecast operativo.")
 
     monkeypatch.setattr("app.routers.forecast.create_daily_forecast", _raise_error)
 
-    response = client.post("/forecast/daily", json={"channel": "Mexico"})
+    response = client.post("/forecast/daily", json={"channel": "Mexico"}, headers=auth_headers)
     assert response.status_code == 400
     assert response.json()["detail"] == "Canal no soportado para forecast operativo."
 
 
-def test_get_forecast_history_returns_latest_runs(db_session, client):
+def test_get_forecast_history_returns_latest_runs(db_session, client, auth_headers):
     older = ForecastRun(
         channel="Choice",
         forecast_date=datetime(2026, 2, 28, 17, 0, 0),
@@ -97,7 +97,7 @@ def test_get_forecast_history_returns_latest_runs(db_session, client):
     db_session.add_all([older, latest])
     db_session.commit()
 
-    response = client.get("/forecast/history", params={"channel": "Choice", "limit": 5})
+    response = client.get("/forecast/history", params={"channel": "Choice", "limit": 5}, headers=auth_headers)
     assert response.status_code == 200
 
     body = response.json()
@@ -107,13 +107,13 @@ def test_get_forecast_history_returns_latest_runs(db_session, client):
     assert body[1]["model_version"] == "lstm_choice"
 
 
-def test_get_forecast_history_returns_empty_list_when_no_rows(client):
-    response = client.get("/forecast/history", params={"channel": "Choice", "limit": 5})
+def test_get_forecast_history_returns_empty_list_when_no_rows(client, auth_headers):
+    response = client.get("/forecast/history", params={"channel": "Choice", "limit": 5}, headers=auth_headers)
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_get_forecast_interval_history_returns_34_slots_for_selected_date(db_session, client):
+def test_get_forecast_interval_history_returns_34_slots_for_selected_date(db_session, client, auth_headers):
     header = ForecastRun(
         channel="Choice",
         forecast_date=datetime(2026, 3, 1, 0, 0, 0),
@@ -156,6 +156,7 @@ def test_get_forecast_interval_history_returns_34_slots_for_selected_date(db_ses
             "forecast_date": "2026-03-01",
             "limit": 2000,
         },
+        headers=auth_headers,
     )
     assert response.status_code == 200
 

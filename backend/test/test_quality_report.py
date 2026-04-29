@@ -3,7 +3,7 @@ from datetime import date, time
 from app.models.historical_interaction import HistoricalInteraction
 
 
-def test_quality_report_returns_extended_metrics_and_detects_issues(client, db_session):
+def test_quality_report_returns_extended_metrics_and_detects_issues(client, db_session, auth_headers):
     db_session.add_all(
         [
             HistoricalInteraction(
@@ -45,7 +45,7 @@ def test_quality_report_returns_extended_metrics_and_detects_issues(client, db_s
     )
     db_session.commit()
 
-    response = client.get("/quality/report")
+    response = client.get("/quality/report", headers=auth_headers)
 
     assert response.status_code == 200, response.text
     payload = response.json()

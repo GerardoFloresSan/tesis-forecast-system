@@ -3,7 +3,7 @@ from datetime import date, time
 from app.models.historical_interaction import HistoricalInteraction
 
 
-def test_quality_report_pdf_returns_downloadable_document(client, db_session):
+def test_quality_report_pdf_returns_downloadable_document(client, db_session, auth_headers):
     db_session.add_all(
         [
             HistoricalInteraction(
@@ -24,7 +24,7 @@ def test_quality_report_pdf_returns_downloadable_document(client, db_session):
     )
     db_session.commit()
 
-    response = client.get("/quality/report/pdf")
+    response = client.get("/quality/report/pdf", headers=auth_headers)
 
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("application/pdf")

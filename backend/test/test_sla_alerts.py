@@ -166,7 +166,12 @@ def test_alerts_active_returns_created_alerts(db_session, client):
     )
     assert evaluate_response.status_code == 200
 
-    response = client.get("/alerts/active")
+    response = client.get(
+        "/alerts/active",
+        headers={
+            "Authorization": f"Bearer {token}",
+        },
+    )
 
     assert response.status_code == 200
     body = response.json()

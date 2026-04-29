@@ -5,7 +5,7 @@ from app.models.model_train_run import ModelTrainRun
 from app.models.scheduler_job_run import SchedulerJobRun
 
 
-def test_get_lstm_status_returns_artifact_flags(client, monkeypatch):
+def test_get_lstm_status_returns_artifact_flags(client, auth_headers, monkeypatch):
     monkeypatch.setattr(
         "app.routers.model.get_lstm_status",
         lambda channel: {
@@ -17,7 +17,7 @@ def test_get_lstm_status_returns_artifact_flags(client, monkeypatch):
         },
     )
 
-    response = client.get("/model/lstm-status", params={"channel": "España"})
+    response = client.get("/model/lstm-status", params={"channel": "España"}, headers=auth_headers)
     assert response.status_code == 200
 
     body = response.json()
@@ -28,7 +28,7 @@ def test_get_lstm_status_returns_artifact_flags(client, monkeypatch):
     assert body["metrics_exists"] is True
 
 
-def test_get_lstm_metrics_returns_operational_metrics(client, monkeypatch):
+def test_get_lstm_metrics_returns_operational_metrics(client, auth_headers, monkeypatch):
     monkeypatch.setattr(
         "app.routers.model.get_lstm_metrics",
         lambda channel: {
@@ -62,7 +62,7 @@ def test_get_lstm_metrics_returns_operational_metrics(client, monkeypatch):
         },
     )
 
-    response = client.get("/model/lstm-metrics", params={"channel": "España"})
+    response = client.get("/model/lstm-metrics", params={"channel": "España"}, headers=auth_headers)
     assert response.status_code == 200
 
     body = response.json()
@@ -74,7 +74,7 @@ def test_get_lstm_metrics_returns_operational_metrics(client, monkeypatch):
     assert body["baseline"]["mape"] == 30.456
 
 
-def test_get_scheduler_status_returns_current_state(client, monkeypatch):
+def test_get_scheduler_status_returns_current_state(client, auth_headers, monkeypatch):
     monkeypatch.setattr(
         "app.routers.model.get_scheduler_status",
         lambda: {
@@ -89,7 +89,7 @@ def test_get_scheduler_status_returns_current_state(client, monkeypatch):
         },
     )
 
-    response = client.get("/model/scheduler-status")
+    response = client.get("/model/scheduler-status", headers=auth_headers)
     assert response.status_code == 200
 
     body = response.json()
@@ -98,7 +98,7 @@ def test_get_scheduler_status_returns_current_state(client, monkeypatch):
     assert body["jobs"][0]["id"] == "auto_forecast_daily"
 
 
-def test_get_scheduler_job_history_returns_latest_rows(db_session, client):
+def test_get_scheduler_job_history_returns_latest_rows(db_session, client, auth_headers):
     older = SchedulerJobRun(
         job_name="auto_retrain_lstm",
         job_type="retrain_check",
@@ -125,7 +125,7 @@ def test_get_scheduler_job_history_returns_latest_rows(db_session, client):
     db_session.add_all([older, latest])
     db_session.commit()
 
-    response = client.get("/model/scheduler-job-history", params={"limit": 10})
+    response = client.get("/model/scheduler-job-history", params={"limit": 10}, headers=auth_headers)
     assert response.status_code == 200
 
     body = response.json()
@@ -135,7 +135,7 @@ def test_get_scheduler_job_history_returns_latest_rows(db_session, client):
     assert body[1]["job_name"] == "auto_retrain_lstm"
 
 
-def test_get_system_summary_returns_latest_operational_context(db_session, client, monkeypatch):
+def test_get_system_summary_returns_latest_operational_context(db_session, client, auth_headers, monkeypatch):
     db_session.add(
         ForecastRun(
             channel="Choice",
@@ -222,7 +222,7 @@ def test_get_system_summary_returns_latest_operational_context(db_session, clien
         },
     )
 
-    response = client.get("/model/system-summary", params={"channel": "Choice"})
+    response = client.get("/model/system-summary", params={"channel": "Choice"}, headers=auth_headers)
     assert response.status_code == 200
 
     body = response.json()
@@ -234,17 +234,17 @@ def test_get_system_summary_returns_latest_operational_context(db_session, clien
     assert body["latest_scheduler_job"]["action_taken"] == "updated_forecast"
 
 
-def test_get_system_summary_returns_400_when_service_fails(client, monkeypatch):
+def test_get_system_summary_returns_400_when_service_fails(client, auth_headers, monkeypatch):
     def _raise_error(db, channel):
         raise ValueError("Canal no soportado para system summary.")
 
     monkeypatch.setattr("app.routers.model.get_system_summary", _raise_error)
 
-    response = client.get("/model/system-summary", params={"channel": "Mexico"})
+    response = client.get("/model/system-summary", params={"channel": "Mexico"}, headers=auth_headers)
     assert response.status_code == 400
     assert response.json()["detail"] == "Canal no soportado para system summary."
 
-def test_check_and_retrain_endpoint_returns_previous_mape(client, monkeypatch):
+def test_check_and_retrain_endpoint_returns_previous_mape(client, auth_headers, monkeypatch):
     monkeypatch.setattr(
         "app.routers.model.check_and_retrain_lstm",
         lambda db, channel, threshold_mape: {
@@ -264,6 +264,7 @@ def test_check_and_retrain_endpoint_returns_previous_mape(client, monkeypatch):
     response = client.post(
         "/model/check-and-retrain-lstm",
         params={"channel": "Choice", "threshold_mape": 15.0},
+        headers=auth_headers,
     )
     assert response.status_code == 200
 

@@ -13,7 +13,7 @@ def _create_excel_file(path: Path, rows: list[dict], sheet_name: str) -> None:
         df.to_excel(writer, index=False, sheet_name=sheet_name)
 
 
-def test_upload_excel_autodetects_sheet_and_loads_incremental_replace(client, db_session, tmp_path, monkeypatch):
+def test_upload_excel_autodetects_sheet_and_loads_incremental_replace(client, db_session, auth_headers, tmp_path, monkeypatch):
     test_upload_dir = tmp_path / "uploads"
     test_upload_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(upload_router_module, "UPLOAD_DIR", test_upload_dir)
@@ -39,6 +39,7 @@ def test_upload_excel_autodetects_sheet_and_loads_incremental_replace(client, db
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
             },
+            headers=auth_headers,
         )
 
     assert response.status_code == 200, response.text
